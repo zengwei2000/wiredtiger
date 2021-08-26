@@ -1121,6 +1121,7 @@ __txn_resolve_prepared_op(WT_SESSION_IMPL *session, WT_TXN_OP *op, bool commit, 
     WT_CURSOR_BTREE *cbt;
     WT_DECL_RET;
     WT_ITEM hs_recno_key;
+    // WT_DECL_ITEM(tmp);
     WT_TXN *txn;
     WT_UPDATE *first_committed_upd, *fix_upd, *tombstone, *upd;
 #ifdef HAVE_DIAGNOSTIC
@@ -1196,10 +1197,15 @@ __txn_resolve_prepared_op(WT_SESSION_IMPL *session, WT_TXN_OP *op, bool commit, 
      */
     prepare_on_disk = F_ISSET(upd, WT_UPDATE_PREPARE_RESTORED_FROM_DS) &&
       (upd->type != WT_UPDATE_TOMBSTONE ||
-        (!commit && upd->next != NULL && upd->durable_ts == upd->next->durable_ts &&
+        (upd->next != NULL && upd->durable_ts == upd->next->durable_ts &&
           upd->txnid == upd->next->txnid && upd->start_ts == upd->next->start_ts));
     first_committed_upd_in_hs =
       first_committed_upd != NULL && F_ISSET(first_committed_upd, WT_UPDATE_HS);
+    // WT_ERR(__wt_scr_alloc(session, 0, &tmp));
+    // printf("prepare key %s %d %d\n",
+    //   __wt_key_string(session, op->u.op_row.key.data, op->u.op_row.key.size, "q", tmp),
+    //   (int)F_ISSET(upd, WT_UPDATE_PREPARE_RESTORED_FROM_DS), (int)first_committed_upd_in_hs);
+    // __wt_scr_free(session, &tmp);
     if (prepare_on_disk || first_committed_upd_in_hs) {
         btree = S2BT(session);
         cbt = (WT_CURSOR_BTREE *)(*cursorp);
@@ -1314,6 +1320,10 @@ __txn_resolve_prepared_op(WT_SESSION_IMPL *session, WT_TXN_OP *op, bool commit, 
      * will be only one uncommitted prepared update.
      */
     if (fix_upd != NULL) {
+        // WT_ERR(__wt_scr_alloc(session, 0, &tmp));
+        // printf("Fix hs key for %s\n", __wt_key_string(session, op->u.op_row.key.data,
+        // op->u.op_row.key.size, "q", tmp));
+        // __wt_scr_free(session, &tmp);
         WT_ERR(__txn_fixup_prepared_update(session, hs_cursor, fix_upd, commit));
         /* Clear the WT_UPDATE_HS flag as we should have removed it from the history store. */
         if (first_committed_upd_in_hs && !commit)

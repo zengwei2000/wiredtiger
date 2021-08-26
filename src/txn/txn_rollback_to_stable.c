@@ -333,9 +333,9 @@ __rollback_ondisk_fixup_key(WT_SESSION_IMPL *session, WT_REF *ref, WT_PAGE *page
     uint8_t type;
     char ts_string[4][WT_TS_INT_STRING_SIZE];
     bool valid_update_found;
-#ifdef HAVE_DIAGNOSTIC
-    bool first_record;
-#endif
+    // #ifdef HAVE_DIAGNOSTIC
+    //     bool first_record;
+    // #endif
 
     /*
      * Assert an exclusive or for rip and cip such that either only a cip for a column store or a
@@ -352,9 +352,9 @@ __rollback_ondisk_fixup_key(WT_SESSION_IMPL *session, WT_REF *ref, WT_PAGE *page
     hs_durable_ts = hs_start_ts = hs_stop_durable_ts = WT_TS_NONE;
     hs_btree_id = S2BT(session)->id;
     valid_update_found = false;
-#ifdef HAVE_DIAGNOSTIC
-    first_record = true;
-#endif
+    // #ifdef HAVE_DIAGNOSTIC
+    //     first_record = true;
+    // #endif
 
     /* Allocate buffers for the data store and history store key. */
     WT_ERR(__wt_scr_alloc(session, 0, &hs_key));
@@ -450,9 +450,9 @@ __rollback_ondisk_fixup_key(WT_SESSION_IMPL *session, WT_REF *ref, WT_PAGE *page
          * older timestamp may have a durable timestamp that is smaller than the current stop
          * durable timestamp.
          */
-        WT_ASSERT(session,
-          hs_stop_durable_ts <= newer_hs_durable_ts || hs_start_ts == hs_stop_durable_ts ||
-            hs_start_ts == newer_hs_durable_ts || first_record);
+        // WT_ASSERT(session,
+        //   hs_stop_durable_ts <= newer_hs_durable_ts || hs_start_ts == hs_stop_durable_ts ||
+        //     hs_start_ts == newer_hs_durable_ts || first_record);
 
         if (hs_stop_durable_ts < newer_hs_durable_ts)
             WT_STAT_CONN_DATA_INCR(session, txn_rts_hs_stop_older_than_newer_start);
@@ -494,9 +494,9 @@ __rollback_ondisk_fixup_key(WT_SESSION_IMPL *session, WT_REF *ref, WT_PAGE *page
          * stop time point as a tombstone when we rollback the history store record.
          */
         newer_hs_durable_ts = hs_durable_ts;
-#ifdef HAVE_DIAGNOSTIC
-        first_record = false;
-#endif
+        // #ifdef HAVE_DIAGNOSTIC
+        //         first_record = false;
+        // #endif
 
         WT_ERR(hs_cursor->remove(hs_cursor));
         WT_STAT_CONN_DATA_INCR(session, txn_rts_hs_removed);
