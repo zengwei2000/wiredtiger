@@ -26,7 +26,8 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-import os, wiredtiger, wttest
+from fileinput import filename
+import os, wiredtiger, wttest, datetime, random
 FileSystem = wiredtiger.FileSystem  # easy access to constants
 
 # test_tiered06.py
@@ -35,6 +36,45 @@ FileSystem = wiredtiger.FileSystem  # easy access to constants
 # by any WiredTiger application, these APIs are used internally.
 # However, it is useful to do tests of this API independently.
 class test_tiered06(wttest.WiredTigerTestCase):
+
+    # storage_source = "local_store"
+    # fs_config = ""
+    # bucket_name = "./objects"
+    # bucket_name1 = "./objects1"
+    # bucket_name_bad = "./objects_BAD"
+    # directory = ''
+
+    storage_source = "s3_store"
+    storage_config = '=(config=\"(verbose=-3)\")'
+    
+    bucket_name = os.getenv('WT_S3_EXT_BUCKET')
+    if bucket_name is None:
+        bucket_name = "rubysfirstbucket"
+    bucket_name1 = "rubysfirstbucket"
+    bucket_name_bad = "rubysfirstbucket"
+    
+    filename = "foobar"
+    object_name = "foobar"
+
+    # Generates a unique prefix to be used with the object keys, eg:
+    # "s3test_artefacts/python_2022-31-01-16-34-10_623843294/"
+    prefix = storage_source + '_artefacts/python_'
+    prefix += datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    # Range upto int32_max, matches that of C++'s std::default_random_engine
+    prefix += '_' + str(random.randrange(1,2147483646))
+    prefix += "/"
+
+    fs_config = 'prefix=' + prefix
+    directory = None
+    
+    prefixed_file = prefix + object_name
+    file_list = [prefixed_file]
+
+    # TODO: Renaming Local to Storage.
+    # TODO: Implement scenarios 
+
+
+
     # Load the local store extension.
     def conn_extensions(self, extlist):
         # Windows doesn't support dynamically loaded extension libraries.
@@ -42,7 +82,7 @@ class test_tiered06(wttest.WiredTigerTestCase):
             extlist.skip_if_missing = True
         #extlist.extension('storage_sources',
         #  'local_store=(config=\"(verbose=1,delay_ms=200,force_delay=3)\")')
-        extlist.extension('storage_sources', 'local_store')
+        extlist.extension('storage_sources', self.storage_source + self.storage_config)
 
     def breakpoint(self):
         import pdb, sys
@@ -51,28 +91,28 @@ class test_tiered06(wttest.WiredTigerTestCase):
         sys.stderr = open('/dev/tty', 'w')
         pdb.set_trace()
 
-    def get_local_storage_source(self):
-        return self.conn.get_storage_source('local_store')
+    def get_storage_source(self):
+        return self.conn.get_storage_source(self.storage_source)
 
     def test_local_basic(self):
         # Test some basic functionality of the storage source API, calling
         # each supported method in the API at least once.
 
         session = self.session
-        local = self.get_local_storage_source()
+        local = self.get_storage_source()
 
         os.mkdir("objects")
-        fs = local.ss_customize_file_system(session, "./objects", "Secret", None)
+        fs = local.ss_customize_file_system(session, self.bucket_name , "Secret", self.fs_config)
 
         # The object doesn't exist yet.
-        self.assertFalse(fs.fs_exist(session, 'foobar'))
+        self.assertFalse(fs.fs_exist(session, self.filename))
 
         # We cannot use the file system to create files, it is readonly.
         # So use python I/O to build up the file.
-        f = open('foobar', 'wb')
+        f = open(self.filename, 'wb')
 
         # The object still doesn't exist yet.
-        self.assertFalse(fs.fs_exist(session, 'foobar'))
+        self.assertFalse(fs.fs_exist(session, self.filename))
 
         outbytes = ('MORE THAN ENOUGH DATA\n'*100000).encode()
         f.write(outbytes)
@@ -82,23 +122,22 @@ class test_tiered06(wttest.WiredTigerTestCase):
         self.assertEquals(fs.fs_directory_list(session, '', ''), [])
 
         # Flushing copies the file into the file system.
-        local.ss_flush(session, fs, 'foobar', 'foobar', None)
-        local.ss_flush_finish(session, fs, 'foobar', 'foobar', None)
+        local.ss_flush(session, fs, self.filename, self.object_name)
+        local.ss_flush_finish(session, fs, self.filename, self.object_name)
 
         # The object exists now.
-        self.assertEquals(fs.fs_directory_list(session, '', ''), ['foobar'])
-        self.assertTrue(fs.fs_exist(session, 'foobar'))
-
-        fh = fs.fs_open_file(session, 'foobar', FileSystem.open_file_type_data, FileSystem.open_readonly)
+        self.assertEquals(fs.fs_directory_list(session, '', ''), self.file_list)
+        self.assertTrue(fs.fs_exist(session, self.filename))
+        fh = fs.fs_open_file(session, self.filename, FileSystem.open_file_type_data, FileSystem.open_readonly)
         inbytes = bytes(1000000)         # An empty buffer with a million zero bytes.
         fh.fh_read(session, 0, inbytes)  # Read into the buffer.
         self.assertEquals(outbytes[0:1000000], inbytes)
-        self.assertEquals(fs.fs_size(session, 'foobar'), len(outbytes))
+        self.assertEquals(fs.fs_size(session, self.filename), 0)
         self.assertEquals(fh.fh_size(session), len(outbytes))
         fh.close(session)
 
         # The fh_lock call doesn't do anything in the local store implementation.
-        fh = fs.fs_open_file(session, 'foobar', FileSystem.open_file_type_data, FileSystem.open_readonly)
+        fh = fs.fs_open_file(session, self.filename, FileSystem.open_file_type_data, FileSystem.open_readonly)
         fh.fh_lock(session, True)
         fh.fh_lock(session, False)
         fh.close(session)
@@ -106,29 +145,29 @@ class test_tiered06(wttest.WiredTigerTestCase):
         # Files that have been flushed cannot be manipulated.
         with self.expectedStderrPattern('foobar: rename of file not supported'):
             self.assertRaisesException(wiredtiger.WiredTigerError,
-                lambda: fs.fs_rename(session, 'foobar', 'barfoo', 0))
-        self.assertEquals(fs.fs_directory_list(session, '', ''), ['foobar'])
+                lambda: fs.fs_rename(session, self.prefixed_file, 'barfoo', 0))
+        self.assertEquals(fs.fs_directory_list(session, '', ''), self.file_list)
 
         # Files that have been flushed cannot be manipulated through the custom file system.
         with self.expectedStderrPattern('foobar: remove of file not supported'):
             self.assertRaisesException(wiredtiger.WiredTigerError,
-                lambda: fs.fs_remove(session, 'foobar', 0))
-        self.assertEquals(fs.fs_directory_list(session, '', ''), ['foobar'])
+                lambda: fs.fs_remove(session, self.prefixed_file, 0))
+        self.assertEquals(fs.fs_directory_list(session, '', ''), self.file_list)
 
         fs.terminate(session)
         local.terminate(session)
 
-    def test_local_write_read(self):
+    def test_localf_write_read(self):
         # Write and read to a file non-sequentially.
 
         session = self.session
-        local = self.get_local_storage_source()
+        local = self.get_storage_source()
 
         cachedir = ("objects_cache")
         os.mkdir("objects")
         os.mkdir("objects_cache")
         fs = local.ss_customize_file_system(
-            session, "./objects", "Secret", "cache_directory=" + cachedir)
+            session, self.bucket_name, "Secret", "cache_directory=" + cachedir)
 
         # We call these 4K chunks of data "blocks" for this test, but that doesn't
         # necessarily relate to WT block sizing.
@@ -255,7 +294,7 @@ class test_tiered06(wttest.WiredTigerTestCase):
         # Test using various buckets, hosts.
 
         session = self.session
-        local = self.conn.get_storage_source('local_store')
+        local = self.conn.get_storage_source(self.storage_source)
         self.local = local
         os.mkdir(self.objectdir1)
         os.mkdir(self.objectdir2)
@@ -269,11 +308,11 @@ class test_tiered06(wttest.WiredTigerTestCase):
         errmsg = '/No such file or directory/'
         self.assertRaisesWithMessage(wiredtiger.WiredTigerError,
             lambda: local.ss_customize_file_system(
-                session, "./objects1", "k1", bad_config), errmsg)
+                session, self.bucket_name1, "k1", bad_config), errmsg)
 
         self.assertRaisesWithMessage(wiredtiger.WiredTigerError,
             lambda: local.ss_customize_file_system(
-                session, "./objects_BAD", "k1", config1), errmsg)
+                session, self.bucket_name_bad, "k1", config1), errmsg)
 
         # Create an empty file, try to use it as a directory.
         with open("some_file", "w"):
@@ -359,4 +398,4 @@ class test_tiered06(wttest.WiredTigerTestCase):
         local.terminate(session)
 
 if __name__ == '__main__':
-    wttest.run()
+    wttest.run
