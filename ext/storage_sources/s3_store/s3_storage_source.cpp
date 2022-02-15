@@ -121,6 +121,8 @@ static int S3AddReference(WT_STORAGE_SOURCE *);
 static int S3FileSystemTerminate(WT_FILE_SYSTEM *, WT_SESSION *);
 static int S3Open(
   WT_FILE_SYSTEM *, WT_SESSION *, const char *, WT_FS_OPEN_FILE_TYPE, uint32_t, WT_FILE_HANDLE **);
+static int S3Remove(WT_FILE_SYSTEM *, WT_SESSION *, const char *, uint32_t);
+static int S3Rename(WT_FILE_SYSTEM *, WT_SESSION *, const char *, const char *, uint32_t);
 static bool LocalFileExists(const std::string &);
 static int S3FileRead(WT_FILE_HANDLE *, WT_SESSION *, wt_off_t, size_t, void *);
 static int S3ObjectList(
@@ -364,6 +366,34 @@ S3Open(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name,
 }
 
 /*
+ * S3Rename --
+ *     POSIX rename, not supported for cloud objects.
+ */
+static int
+S3Rename(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *from, const char *to,
+  uint32_t flags)
+{
+    (void)to;    /* unused */
+    (void)flags; /* unused */
+    std::cout << "Inside S3Rename" << std::endl;
+    std::cerr << from << ": rename of file not supported" << std::endl;
+    return (1);
+}
+
+/*
+ * S3Remove --
+ *     POSIX remove, not supported for cloud objects.
+ */
+static int
+S3Remove(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *name, uint32_t flags)
+{
+    (void)flags; /* unused */
+    std::cout << "Inside S3Remove" << std::endl;
+    std::cerr << name << ": remove of file not supported" << std::endl;
+    return (1);
+}
+
+/*
  * S3Size --
  *     Get the size of a file in bytes, by file name.
  */
@@ -516,10 +546,12 @@ S3CustomizeFileSystem(WT_STORAGE_SOURCE *storageSource, WT_SESSION *session, con
     fs->fileSystem.fs_directory_list = S3ObjectList;
     fs->fileSystem.fs_directory_list_single = S3ObjectListSingle;
     fs->fileSystem.fs_directory_list_free = S3ObjectListFree;
-    fs->fileSystem.terminate = S3FileSystemTerminate;
     fs->fileSystem.fs_exist = S3Exist;
     fs->fileSystem.fs_open_file = S3Open;
+    fs->fileSystem.fs_rename = S3Rename;
     fs->fileSystem.fs_size = S3Size; 
+
+    fs->fileSystem.terminate = S3FileSystemTerminate;
 
     /* Add to the list of the active file systems. Lock will be freed when the scope is exited. */
     {

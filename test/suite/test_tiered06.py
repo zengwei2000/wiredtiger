@@ -141,9 +141,9 @@ class test_tiered06(wttest.WiredTigerTestCase):
         fh.fh_lock(session, True)
         fh.fh_lock(session, False)
         fh.close(session)
-
+        
         # Files that have been flushed cannot be manipulated.
-        with self.expectedStderrPattern('foobar: rename of file not supported'):
+        with self.expectedStderrPattern(self.prefix, 'foobar: rename of file not supported'):
             self.assertRaisesException(wiredtiger.WiredTigerError,
                 lambda: fs.fs_rename(session, self.prefixed_file, 'barfoo', 0))
         self.assertEquals(fs.fs_directory_list(session, '', ''), self.file_list)
