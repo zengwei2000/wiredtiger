@@ -131,9 +131,9 @@ static int S3ObjectListSingle(
   WT_FILE_SYSTEM *, WT_SESSION *, const char *, const char *, char ***, uint32_t *);
 static int S3ObjectListFree(WT_FILE_SYSTEM *, WT_SESSION *, char **, uint32_t);
 static void S3ShowStatistics(const S3_STATISTICS &);
-
 static int S3FileClose(WT_FILE_HANDLE *, WT_SESSION *);
 static int S3FileSize(WT_FILE_HANDLE *, WT_SESSION *, wt_off_t *);
+static int S3FileLock(WT_FILE_HANDLE *, WT_SESSION *, bool);
 static int S3Size(WT_FILE_SYSTEM *, WT_SESSION *, const char *, wt_off_t *);
 
 /*
@@ -163,6 +163,8 @@ S3Path(const std::string &dir, const std::string &name)
 static int
 S3Exist(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name, bool *exist)
 {
+    std::cout << "Inside S3Exist" << std::endl;
+
     size_t objectSize;
     S3_FILE_SYSTEM *fs = (S3_FILE_SYSTEM *)fileSystem;
     int ret = 0;
@@ -328,7 +330,7 @@ S3Open(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name,
     fileHandle->fh_advise = NULL;
     fileHandle->fh_extend = NULL;
     fileHandle->fh_extend_nolock = NULL;
-    fileHandle->fh_lock = NULL;
+    fileHandle->fh_lock = S3FileLock;
     fileHandle->fh_map = NULL;
     fileHandle->fh_map_discard = NULL;
     fileHandle->fh_map_preload = NULL;
@@ -368,24 +370,6 @@ S3Open(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name,
 static int
 S3Size(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name, wt_off_t *sizep)
 {
-    struct stat sb;
-    S3_STORAGE *storage;
-
-    storage = FS2S3(fileSystem);
-    *sizep = 0;
-
-    *sizep = sb.st_size;
-    std::cout << "Inside S3Size" << std::endl;
-    return (0);
-}
-
-/*
- * S3Size --
- *     Get the size of a file in bytes, by file name.
- */
-static int
-S3Size(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name, wt_off_t *sizep)
-{
     S3_STORAGE *s3 = FS2S3(fileSystem);
     size_t objectSize;
     bool exist;
@@ -398,6 +382,22 @@ S3Size(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name, wt_off
         return (ret);
     *sizep = objectSize;
     return (ret);
+}
+
+/*
+ * S3FileLock --
+ *     Lock/unlock a file.
+ */
+static int
+S3FileLock(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, bool lock)
+{
+    /* Locks are always granted. */
+    std::cout << "Iniside S3FileLock" << std::endl;
+    (void)session; /* Unused */
+    (void)lock;    /* Unused */
+
+    ((S3_FILE_HANDLE *)fileHandle)->storage->statistics.fhOps++;
+    return (0);
 }
 
 /*
@@ -414,24 +414,8 @@ S3FileRead(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, wt_off_t offset, siz
     s3->statistics.fhReadOps++;
     if ((ret = wtFileHandle->fh_read(wtFileHandle, session, offset, len, buf)) != 0)
         std::cerr << "S3FileRead: fh_read failed." << std::endl;
+    std::cout << "Inside S3FileRead" << std::endl;
     return (ret);
-}
-
-/*
- * S3FileSize --
- *     Get the size of a file in bytes, by file handle.
- */
-static int
-S3FileSize(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, wt_off_t *sizep)
-{
-    std::cout << "Inside S3FileSize" << std::endl;
-    S3_FILE_HANDLE *s3FileHandle;
-    WT_FILE_HANDLE *wt_fh;
-
-    s3FileHandle= (S3_FILE_HANDLE *)fileHandle;
-    wt_fh = s3FileHandle->wtFileHandle;
-    std::cout << "Inside S3FileSize" << std::endl;
-    return (wt_fh->fh_size(wt_fh, session, sizep));
 }
 
 /*
@@ -445,6 +429,7 @@ S3FileSize(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, wt_off_t *sizep)
     S3_STORAGE *s3 = s3FileHandle->storage;
     WT_FILE_HANDLE *wtFileHandle = s3FileHandle->wtFileHandle;
     s3->statistics.fhOps++;
+    std::cout << "Inside S3FileSize" << std::endl;
     return (wtFileHandle->fh_size(wtFileHandle, session, sizep));
 }
 
@@ -577,6 +562,8 @@ static int
 S3ObjectList(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *directory,
   const char *prefix, char ***objectList, uint32_t *count)
 {
+    std::cout << "Inside S3bjectList" << std::endl;
+
     S3_FILE_SYSTEM *fs = (S3_FILE_SYSTEM *)fileSystem;
     S3_STORAGE *s3 = FS2S3(fileSystem);
 
@@ -601,7 +588,7 @@ S3ObjectList(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *direct
     *count = objects.size();
 
     S3ObjectListAdd(s3, objectList, objects, *count);
-
+    
     return (ret);
 }
 
@@ -747,6 +734,8 @@ static int
 S3Flush(WT_STORAGE_SOURCE *storageSource, WT_SESSION *session, WT_FILE_SYSTEM *fileSystem,
   const char *source, const char *object, const char *config)
 {
+    std::cout << "Inside S3Flush" << std::endl;
+
     S3_FILE_SYSTEM *fs = (S3_FILE_SYSTEM *)fileSystem;
 
     int ret;
@@ -764,6 +753,8 @@ static int
 S3FlushFinish(WT_STORAGE_SOURCE *storage, WT_SESSION *session, WT_FILE_SYSTEM *fileSystem,
   const char *source, const char *object, const char *config)
 {
+    std::cout << "Inside S3FlushFinish" << std::endl;
+
     S3_FILE_SYSTEM *fs = (S3_FILE_SYSTEM *)fileSystem;
     /* Constructing the pathname for source and cache from file system and local.  */
     std::string srcPath = S3Path(fs->homeDir, source);

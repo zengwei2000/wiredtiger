@@ -132,7 +132,7 @@ class test_tiered06(wttest.WiredTigerTestCase):
         inbytes = bytes(1000000)         # An empty buffer with a million zero bytes.
         fh.fh_read(session, 0, inbytes)  # Read into the buffer.
         self.assertEquals(outbytes[0:1000000], inbytes)
-        self.assertEquals(fs.fs_size(session, self.filename), 0)
+        self.assertEquals(fs.fs_size(session, self.filename), len(outbytes))
         self.assertEquals(fh.fh_size(session), len(outbytes))
         fh.close(session)
 
