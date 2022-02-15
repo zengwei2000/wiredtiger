@@ -136,7 +136,6 @@ static int S3FileClose(WT_FILE_HANDLE *, WT_SESSION *);
 static int S3FileSize(WT_FILE_HANDLE *, WT_SESSION *, wt_off_t *);
 static int S3Size(WT_FILE_SYSTEM *, WT_SESSION *, const char *, wt_off_t *);
 
-
 /*
  * S3Path --
  *     Construct a pathname from the directory and the object name.
@@ -164,27 +163,20 @@ S3Path(const std::string &dir, const std::string &name)
 static int
 S3Exist(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name, bool *exist)
 {
+    size_t objectSize;
     S3_FILE_SYSTEM *fs = (S3_FILE_SYSTEM *)fileSystem;
     int ret = 0;
 
     /* Check if file exists in the cache. */
     *exist = S3CacheExists(fileSystem, name);
-<<<<<<< HEAD
     if (*exist)
         return (ret);
 
     /* It's not in the cache, try the S3 bucket. */
     FS2S3(fileSystem)->statistics.objectExistsCount++;
-    if ((ret = fs->connection->ObjectExists(name, *exist)) != 0)
+    if ((ret = fs->connection->ObjectExists(name, *exist, objectSize)) != 0)
         std::cerr << "S3Exist: ObjectExists request to S3 failed." << std::endl;
     return (ret);
-=======
-    if (!*exist)
-        std::cout << "Inside S3Exist->ObjectExist" << std::endl;
-        return (fs->connection->ObjectExists(name, *exist));
-    std::cout << "Inside S3Exist" << std::endl;
-    return (0);
->>>>>>> Merging initial functionalities into tiered06, adding missing functions in s3 connection.
 }
 
 /*
@@ -230,7 +222,7 @@ S3GetDirectory(const std::string &home, const std::string &name, bool create, st
 
     ret = stat(dirName.c_str(), &sb);
     if (ret != 0 && errno == ENOENT && create) {
-        (void)mkdir(dirName.c_str(), 0777);
+        mkdir(dirName.c_str(), 0777);
         ret = stat(dirName.c_str(), &sb);
     }
 
@@ -252,18 +244,18 @@ S3FileClose(WT_FILE_HANDLE *fileHandle, WT_SESSION *session)
 {
     int ret = 0;
     S3_FILE_HANDLE *s3FileHandle = (S3_FILE_HANDLE *)fileHandle;
-    S3_STORAGE *storage = s3FileHandle->storage;
+    S3_STORAGE *s3 = s3FileHandle->storage;
     WT_FILE_HANDLE *wtFileHandle = s3FileHandle->wtFileHandle;
     /*
      * We require exclusive access to the list of file handles when removing file handles. The
      * lock_guard will be unlocked automatically once the scope is exited.
      */
     {
-        std::lock_guard<std::mutex> lock(storage->fhMutex);
-        storage->fhList.remove(s3FileHandle);
+        std::lock_guard<std::mutex> lock(s3->fhMutex);
+        s3->fhList.remove(s3FileHandle);
     }
     if (wtFileHandle != NULL) {
-        storage->statistics.fhOps++;
+        s3->statistics.fhOps++;
         ret = wtFileHandle->close(wtFileHandle, session);
     }
 
@@ -388,26 +380,41 @@ S3Size(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name, wt_off
 }
 
 /*
+ * S3Size --
+ *     Get the size of a file in bytes, by file name.
+ */
+static int
+S3Size(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name, wt_off_t *sizep)
+{
+    S3_STORAGE *s3 = FS2S3(fileSystem);
+    size_t objectSize;
+    bool exist;
+    *sizep = 0;
+    int ret;
+
+    S3_FILE_SYSTEM *fs = (S3_FILE_SYSTEM *)fileSystem;
+    s3->statistics.objectExistsCount++;
+    if ((ret = fs->connection->ObjectExists(name, exist, objectSize)) != 0)
+        return (ret);
+    *sizep = objectSize;
+    return (ret);
+}
+
+/*
  * S3FileRead --
  *     Read a file using WiredTiger's native file handle read.
  */
 static int
 S3FileRead(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, wt_off_t offset, size_t len, void *buf)
 {
-<<<<<<< HEAD
     S3_FILE_HANDLE *s3FileHandle = (S3_FILE_HANDLE *)fileHandle;
-    S3_STORAGE *storage = s3FileHandle->storage;
+    S3_STORAGE *s3 = s3FileHandle->storage;
     WT_FILE_HANDLE *wtFileHandle = s3FileHandle->wtFileHandle;
     int ret;
-    storage->statistics.fhReadOps++;
+    s3->statistics.fhReadOps++;
     if ((ret = wtFileHandle->fh_read(wtFileHandle, session, offset, len, buf)) != 0)
         std::cerr << "S3FileRead: fh_read failed." << std::endl;
     return (ret);
-=======
-    std::cout << "Inside S3FileRead" << std::endl;
-    WT_FILE_HANDLE *wtFileHandle = ((S3_FILE_HANDLE *)file_handle)->wtFileHandle;
-    return (wtFileHandle->fh_read(wtFileHandle, session, offset, len, buf));
->>>>>>> Merging initial functionalities into tiered06, adding missing functions in s3 connection.
 }
 
 /*
@@ -425,6 +432,20 @@ S3FileSize(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, wt_off_t *sizep)
     wt_fh = s3FileHandle->wtFileHandle;
     std::cout << "Inside S3FileSize" << std::endl;
     return (wt_fh->fh_size(wt_fh, session, sizep));
+}
+
+/*
+ * S3FileSize --
+ *     Get the size of a file in bytes, by file handle.
+ */
+static int
+S3FileSize(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, wt_off_t *sizep)
+{
+    S3_FILE_HANDLE *s3FileHandle = (S3_FILE_HANDLE *)fileHandle;
+    S3_STORAGE *s3 = s3FileHandle->storage;
+    WT_FILE_HANDLE *wtFileHandle = s3FileHandle->wtFileHandle;
+    s3->statistics.fhOps++;
+    return (wtFileHandle->fh_size(wtFileHandle, session, sizep));
 }
 
 /*
@@ -628,8 +649,8 @@ S3ObjectListSingle(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *
 static int
 S3ObjectListFree(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, char **objectList, uint32_t count)
 {
-    (void)fileSystem;
-    (void)session;
+    UNUSED(fileSystem);
+    UNUSED(session);
 
     if (objectList != NULL) {
         while (count > 0)
@@ -730,7 +751,7 @@ S3Flush(WT_STORAGE_SOURCE *storageSource, WT_SESSION *session, WT_FILE_SYSTEM *f
 
     int ret;
     FS2S3(fileSystem)->statistics.putObjectCount++;
-    if (ret = (fs->connection->PutObject(object, source)) != 0)
+    if ((ret = fs->connection->PutObject(object, source)) != 0)
         std::cerr << "S3Flush: PutObject request to S3 failed." << std::endl;
     return (ret);
 }
@@ -766,7 +787,7 @@ S3ShowStatistics(const S3_STATISTICS &statistics)
 {
     std::cout << "S3 list objects count: " << statistics.listObjectsCount << std::endl;
     std::cout << "S3 put object count: " << statistics.putObjectCount << std::endl;
-    std::cout << "S3 get object count: " << statistics.putObjectCount << std::endl;
+    std::cout << "S3 get object count: " << statistics.getObjectCount << std::endl;
     std::cout << "S3 object exists count: " << statistics.objectExistsCount << std::endl;
 
     std::cout << "Non read/write file handle operations: " << statistics.fhOps << std::endl;
