@@ -43,10 +43,10 @@ prefix += datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
 prefix += '_' + str(random.randrange(1,2147483646))
 prefix += "/"
 
-local = ('local_', {'storage_source':'local_store', 'fs_config':'', 'bucket_name':'./objects',
+local = ('local', {'storage_source':'local_store', 'fs_config':'', 'bucket_name':'./objects',
 'storage_config':'', 'prefixed_file': 'foobar', 'file_list':['foobar']})
 
-s3 = ('s3', {'storage_source':'s3_store', 'fs_config':'prefix='+prefix, 
+s3 = ('s3', {'storage_source':'s3_store', 'fs_config': 'region=ap-southeast-2,prefix=' + prefix,  
 'bucket_name':'testwtbuck102', 'storage_config':'=(config=\"(verbose=-3)\")',
 'prefixed_file': prefix + 'foobar', 'file_list':[prefix + 'foobar']})
 
@@ -311,8 +311,8 @@ class test_tiered06(wttest.WiredTigerTestCase, TestWithScenarios):
         # Now create some file systems that should succeed.
         # Use either different bucket directories or different prefixes,
         # so activity that happens in the various file systems should be independent.
-        fs1 = local.ss_customize_file_system(session, self.bucket_name, "k1", config1)
-        fs2 = local.ss_customize_file_system(session, self.bucket_name, "k2", config2)
+        fs1 = local.ss_customize_file_system(session, self.bucket_name, "k1", self.fs_config + "," + config1)
+        fs2 = local.ss_customize_file_system(session, self.bucket_name, "k2", self.fs_config + "abcd/," + config2)
 
         # Create files in the wt home directory.
         for a in ['beagle', 'bird', 'bison', 'bat']:
