@@ -265,7 +265,6 @@ S3FileClose(WT_FILE_HANDLE *fileHandle, WT_SESSION *session)
 
     free(s3FileHandle->iface.name);
     free(s3FileHandle);
-    std::cout << "Inside S3FileClose" << std::endl;
 
     return (ret);
 }
@@ -284,7 +283,6 @@ S3Open(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name,
     WT_FILE_SYSTEM *wtFileSystem = fs->wtFileSystem;
     WT_FILE_HANDLE *wtFileHandle;
     int ret;
-    std::cout << "Inside S3Open start" << std::endl;
 
     *fileHandlePtr = NULL;
 
@@ -360,7 +358,6 @@ S3Open(WT_FILE_SYSTEM *fileSystem, WT_SESSION *session, const char *name,
     }
 
     *fileHandlePtr = fileHandle;
-    std::cout << "Inside S3Open end" << std::endl;
 
     return (0);
 }
@@ -375,9 +372,8 @@ S3Rename(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *from, con
 {
     (void)to;    /* unused */
     (void)flags; /* unused */
-    std::cout << "Inside S3Rename" << std::endl;
     std::cerr << from << ": rename of file not supported" << std::endl;
-    return (1);
+    return (ENOTSUP);
 }
 
 /*
@@ -388,9 +384,8 @@ static int
 S3Remove(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *name, uint32_t flags)
 {
     (void)flags; /* unused */
-    std::cout << "Inside S3Remove" << std::endl;
     std::cerr << name << ": remove of file not supported" << std::endl;
-    return (1);
+    return (ENOTSUP);
 }
 
 /*
@@ -444,7 +439,6 @@ S3FileRead(WT_FILE_HANDLE *fileHandle, WT_SESSION *session, wt_off_t offset, siz
     s3->statistics.fhReadOps++;
     if ((ret = wtFileHandle->fh_read(wtFileHandle, session, offset, len, buf)) != 0)
         std::cerr << "S3FileRead: fh_read failed." << std::endl;
-    std::cout << "Inside S3FileRead" << std::endl;
     return (ret);
 }
 
@@ -751,7 +745,7 @@ S3Terminate(WT_STORAGE_SOURCE *storageSource, WT_SESSION *session)
     /* Log collected statistics on termination. */
     S3ShowStatistics(s3->statistics);
 
-    Aws::Utils::Logging::ShutdownAWSLogging();
+    // Aws::Utils::Logging::ShutdownAWSLogging();
     Aws::ShutdownAPI(options);
 
     delete (s3);
@@ -848,8 +842,8 @@ wiredtiger_extension_init(WT_CONNECTION *connection, WT_CONFIG_ARG *config)
     s3->statistics = {0};
 
     /* Create a logger for this storage source, and then initialize the AWS SDK. */
-    Aws::Utils::Logging::InitializeAWSLogging(
-      Aws::MakeShared<S3LogSystem>("storage", s3->wtApi, s3->verbose));
+    // Aws::Utils::Logging::InitializeAWSLogging(
+    //   Aws::MakeShared<S3LogSystem>("storage", s3->wtApi, s3->verbose));
     Aws::InitAPI(options);
 
     /*
