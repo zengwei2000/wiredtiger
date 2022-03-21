@@ -662,6 +662,10 @@ __wt_btcur_prev(WT_CURSOR_BTREE *cbt, bool truncating)
     session = CUR2S(cbt);
     total_skipped = 0;
 
+    if (F_ISSET(cbt, WT_CBT_REPOSITION) && session->txn->isolation == WT_ISO_SNAPSHOT) {
+        WT_RET(__wt_btcur_reposition(cbt));
+    }
+
     WT_STAT_CONN_DATA_INCR(session, cursor_prev);
 
     flags = /* tree walk flags */

@@ -222,6 +222,7 @@ __cursor_reset(WT_CURSOR_BTREE *cbt)
     __wt_cursor_key_order_reset(cbt); /* Clear key-order checks. */
 #endif
     __cursor_pos_clear(cbt);
+    F_CLR(cbt, WT_CBT_REPOSITION);
 
     /* If the cursor was active, deactivate it. */
     if (F_ISSET(cbt, WT_CBT_ACTIVE)) {

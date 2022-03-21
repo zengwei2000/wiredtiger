@@ -445,6 +445,51 @@ __wt_btcur_reset(WT_CURSOR_BTREE *cbt)
     return (__cursor_reset(cbt));
 }
 
+int
+__wt_btcur_release_page(WT_CURSOR_BTREE *cbt)
+{
+    WT_CURSOR *cursor;
+    WT_SESSION_IMPL *session;
+
+    cursor = &cbt->iface;
+    session = CUR2S(cbt);
+
+    WT_RET(__wt_cursor_localkey(cursor));
+    WT_RET(__cursor_localvalue(cursor));
+    WT_RET(__cursor_reset(cbt));
+
+    WT_ASSERT(session, F_ISSET(cursor, WT_CURSTD_VALUE_EXT) && F_ISSET(cursor, WT_CURSTD_KEY_EXT));
+
+    F_SET(cbt, WT_CBT_REPOSITION);
+
+    return (0);
+}
+
+int
+__wt_btcur_reposition(WT_CURSOR_BTREE *cbt)
+{
+    WT_CURSOR *cursor;
+    WT_DECL_RET;
+    WT_SESSION_IMPL *session;
+
+    cursor = &cbt->iface;
+    session = CUR2S(cbt);
+
+    if (!F_ISSET(cursor, WT_CURSTD_KEY_EXT))
+        WT_ERR_PANIC(session, EINVAL, "reposition flag is set without a search key");
+
+    WT_RET(__wt_btcur_search(cbt, false));
+
+    /* Search maintains a position, key and value. */
+    WT_ASSERT(session,
+      F_ISSET(cbt, WT_CBT_ACTIVE) && F_MASK(cursor, WT_CURSTD_KEY_SET) == WT_CURSTD_KEY_INT &&
+        F_MASK(cursor, WT_CURSTD_VALUE_SET) == WT_CURSTD_VALUE_INT);
+
+err:
+    F_CLR(cbt, WT_CBT_REPOSITION);
+    return (ret);
+}
+
 /*
  * __wt_btcur_search_prepared --
  *     Search and return exact matching records only.
@@ -515,7 +560,7 @@ __wt_btcur_search_prepared(WT_CURSOR *cursor, WT_UPDATE **updp)
  *     Search for a matching record in the tree.
  */
 int
-__wt_btcur_search(WT_CURSOR_BTREE *cbt)
+__wt_btcur_search(WT_CURSOR_BTREE *cbt, bool release)
 {
     WT_BTREE *btree;
     WT_CURFILE_STATE state;
@@ -530,6 +575,7 @@ __wt_btcur_search(WT_CURSOR_BTREE *cbt)
 
     WT_STAT_CONN_DATA_INCR(session, cursor_search);
 
+    F_CLR(cbt, WT_CBT_REPOSITION);
     __wt_txn_search_check(session);
     __cursor_state_save(cursor, &state);
 
@@ -612,7 +658,13 @@ __wt_btcur_search(WT_CURSOR_BTREE *cbt)
     if (ret == 0)
         WT_ERR(__wt_cursor_key_order_init(cbt));
 #endif
-
+    if (ret == 0) {
+        if (release) {
+            // printf("c");
+            // WT_ERR(__wt_btcur_release_page(cbt));
+            WT_ASSERT(session, true);
+        }
+    }
 err:
     if (ret != 0) {
         WT_TRET(__cursor_reset(cbt));
@@ -642,7 +694,7 @@ __wt_btcur_search_near(WT_CURSOR_BTREE *cbt, int *exactp)
     exact = 0;
 
     WT_STAT_CONN_DATA_INCR(session, cursor_search_near);
-
+    F_CLR(cbt, WT_CBT_REPOSITION);
     __wt_txn_search_check(session);
     __cursor_state_save(cursor, &state);
 
@@ -829,6 +881,8 @@ __wt_btcur_insert(WT_CURSOR_BTREE *cbt)
 
     WT_STAT_CONN_DATA_INCR(session, cursor_insert);
     WT_STAT_CONN_DATA_INCRV(session, cursor_insert_bytes, insert_bytes);
+
+    F_CLR(cbt, WT_CBT_REPOSITION);
 
     if (btree->type == BTREE_ROW)
         WT_RET(__cursor_size_chk(session, &cursor->key));
@@ -1069,6 +1123,11 @@ __wt_btcur_remove(WT_CURSOR_BTREE *cbt, bool positioned)
     iterating = F_ISSET(cbt, WT_CBT_ITERATE_NEXT | WT_CBT_ITERATE_PREV);
     searched = false;
 
+    if (F_ISSET(cbt, WT_CBT_REPOSITION) && session->txn->isolation == WT_ISO_SNAPSHOT) {
+        WT_RET(__wt_btcur_reposition(cbt));
+    }
+    F_CLR(cbt, WT_CBT_REPOSITION);
+
     WT_STAT_CONN_DATA_INCR(session, cursor_remove);
     WT_STAT_CONN_DATA_INCRV(session, cursor_remove_bytes, cursor->key.size);
 
@@ -1256,6 +1315,8 @@ __btcur_update(WT_CURSOR_BTREE *cbt, WT_ITEM *value, u_int modify_type)
     cursor = &cbt->iface;
     session = CUR2S(cbt);
     yield_count = sleep_usecs = 0;
+
+    F_CLR(cbt, WT_CBT_REPOSITION);
 
     /* It's no longer possible to bulk-load into the tree. */
     __wt_btree_disable_bulk(session);
@@ -1468,6 +1529,7 @@ __wt_btcur_modify(WT_CURSOR_BTREE *cbt, WT_MODIFY *entries, int nentries)
     cursor = &cbt->iface;
     session = CUR2S(cbt);
 
+    F_CLR(cbt, WT_CBT_REPOSITION);
     /* Save the cursor state. */
     __cursor_state_save(cursor, &state);
 
@@ -1496,7 +1558,7 @@ __wt_btcur_modify(WT_CURSOR_BTREE *cbt, WT_MODIFY *entries, int nentries)
         WT_ERR_MSG(session, ENOTSUP, "not supported in implicit transactions");
 
     if (!F_ISSET(cursor, WT_CURSTD_KEY_INT) || !F_ISSET(cursor, WT_CURSTD_VALUE_INT))
-        WT_ERR(__wt_btcur_search(cbt));
+        WT_ERR(__wt_btcur_search(cbt, false));
 
     WT_ERR(__wt_modify_pack(cursor, entries, nentries, &modify));
 
@@ -1554,6 +1616,7 @@ __wt_btcur_reserve(WT_CURSOR_BTREE *cbt)
     session = CUR2S(cbt);
 
     WT_STAT_CONN_DATA_INCR(session, cursor_reserve);
+    F_CLR(cbt, WT_CBT_REPOSITION);
 
     /* WT_CURSOR.reserve is update-without-overwrite and a special value. */
     overwrite = F_ISSET(cursor, WT_CURSTD_OVERWRITE);
@@ -1582,6 +1645,7 @@ __wt_btcur_update(WT_CURSOR_BTREE *cbt)
     WT_STAT_CONN_DATA_INCR(session, cursor_update);
     WT_STAT_CONN_DATA_INCRV(session, cursor_update_bytes, cursor->key.size + cursor->value.size);
 
+    F_CLR(cbt, WT_CBT_REPOSITION);
     if (btree->type == BTREE_ROW)
         WT_RET(__cursor_size_chk(session, &cursor->key));
     WT_RET(__cursor_size_chk(session, &cursor->value));
@@ -1727,7 +1791,7 @@ __cursor_truncate(
  * the end cursor, so we know that page is pinned in memory and we can proceed without concern.
  */
 retry:
-    WT_ERR(__wt_btcur_search(start));
+    WT_ERR(__wt_btcur_search(start, false));
     WT_ASSERT(session, F_MASK((WT_CURSOR *)start, WT_CURSTD_KEY_SET) == WT_CURSTD_KEY_INT);
 
     for (;;) {
@@ -1784,7 +1848,7 @@ __cursor_truncate_fix(
  * full search to refresh the page's modification information.
  */
 retry:
-    WT_ERR(__wt_btcur_search(start));
+    WT_ERR(__wt_btcur_search(start, false));
     WT_ASSERT(session, F_MASK((WT_CURSOR *)start, WT_CURSTD_KEY_SET) == WT_CURSTD_KEY_INT);
 
     for (;;) {
