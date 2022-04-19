@@ -15,7 +15,7 @@
 
 TEST_CASE("Reconciliation tracking: ovfl_track_init", "[reconciliation]")
 {
-    ConnectionWrapper conn(DB_HOME);
+    ConnectionWrapper conn(utils::UnitTestDatabaseHome);
     WT_SESSION_IMPL *session = conn.createSession();
 
     WT_PAGE p;
@@ -32,7 +32,7 @@ TEST_CASE("Reconciliation tracking: ovfl_track_init", "[reconciliation]")
 
 TEST_CASE("Reconciliation tracking: ovfl_discard_verbose", "[reconciliation]")
 {
-    ConnectionWrapper conn(DB_HOME);
+    ConnectionWrapper conn(utils::UnitTestDatabaseHome);
     WT_SESSION_IMPL *session = conn.createSession();
 
     SECTION("handle null page and tag")
@@ -43,7 +43,7 @@ TEST_CASE("Reconciliation tracking: ovfl_discard_verbose", "[reconciliation]")
 
 TEST_CASE("Reconciliation tracking: ovfl_discard_wrapup", "[reconciliation]")
 {
-    ConnectionWrapper conn(DB_HOME);
+    ConnectionWrapper conn(utils::UnitTestDatabaseHome);
     WT_SESSION_IMPL *session = conn.createSession();
 
     WT_PAGE p;
