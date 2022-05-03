@@ -30,7 +30,7 @@ ConnectionWrapper::~ConnectionWrapper()
 WT_SESSION_IMPL *
 ConnectionWrapper::createSession()
 {
-    WT_SESSION *sess;
+    WT_SESSION* sess = nullptr;
     _conn->open_session(_conn, nullptr, nullptr, &sess);
 
     auto sess_impl = (WT_SESSION_IMPL *)sess;

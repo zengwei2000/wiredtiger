@@ -40,6 +40,8 @@ wiredtigerCleanup(std::filesystem::path const& db_home)
     remove_wrapper(db_home / "WiredTiger.wt");
     remove_wrapper(db_home / "WiredTigerHS.wt");
     remove_wrapper(db_home / "access.wt");
+    remove_wrapper(db_home / "access1.wt");
+    remove_wrapper(db_home / "access2.wt");
 
     remove_wrapper(db_home);
 }
