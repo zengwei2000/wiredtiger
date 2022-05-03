@@ -53,6 +53,16 @@ TEST_CASE("Truncate and compact: create simple table", "[compact]")
 
 TEST_CASE("Truncate and compact: table", "[compact]")
 {
+    // The goal of this test is to ensure that truncate and compact work together
+    //
+    // The steps in this test are:
+    // 1. Add a large number of key/values to a database with small pages,
+    //    so that many subtrees are created.
+    // 2. Truncate part of the tree, so that at least one subtree is deleted.
+    // 3. Perform a cursor traversal on the tree, at a time prior to the truncate
+    // 4. Run a compact operation, while a reader is trying to
+    //    read some of the data deleted by the truncate, and ensure that this works.
+
     ConnectionWrapper conn(utils::UnitTestDatabaseHome);
     WT_SESSION_IMPL* sessionImpl = conn.createSession();
     WT_SESSION* session = &(sessionImpl->iface);
@@ -71,6 +81,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         REQUIRE(session->begin_transaction(session, nullptr) == 0);
         REQUIRE(session->timestamp_transaction_uint(session, WT_TS_TXN_TYPE_COMMIT, 10) == 0);
 
+        // Add 9000 key/values
         for (int i = 1000; i < 10000; i++) {
             std::basic_string key = testcase_key_base + std::to_string(i);
             std::basic_string value = testcase_value_base + std::to_string(i);
@@ -164,7 +175,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         REQUIRE(ret == WT_NOTFOUND); // Check for end-of-table.
         REQUIRE(session->commit_transaction(session, nullptr) == 0);
         std::cout << "number of key:value pairs: " << numValues << std::endl;
-        REQUIRE(numValues == 9000);  // We should see them prior to the truncate
+        REQUIRE(numValues == 9000); // We should see the number of values from prior to the truncate
     }
 
     {
@@ -172,4 +183,6 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         std::cout << "Compact (2):" << std::endl;
         REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
     }
+
+    // TODO: we get a "scratch buffer allocated and never discarded" warning. It should be fixed.
 }
