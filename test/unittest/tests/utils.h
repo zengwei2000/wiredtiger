@@ -14,5 +14,5 @@ const std::basic_string UnitTestDatabaseHome = "test_db";
 inline bool isSuccessResult(int result) { return result == 0; };
 
 void throwIfNonZero(int result);
-void wiredtigerCleanup(std::filesystem::path const& db_home);
+void wiredtigerCleanup(std::string const& db_home);
 } // namespace utils
