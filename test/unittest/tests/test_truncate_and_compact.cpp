@@ -12,7 +12,6 @@
 #include "wiredtiger.h"
 #include "utils.h"
 #include "wrappers/connection_wrapper.h"
-#include "wrappers/tailq_wrapper.h"
 
 static const std::string testcase_key_base = "key ";
 static const std::string testcase_value_base = "a really long string and a value ";
