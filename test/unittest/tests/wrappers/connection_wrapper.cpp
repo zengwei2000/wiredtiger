@@ -17,7 +17,7 @@ ConnectionWrapper::ConnectionWrapper(const std::string &db_home)
     : _conn_impl(nullptr), _conn(nullptr), _db_home(db_home)
 {
     utils::throwIfNonZero(mkdir(_db_home.c_str(), 0700));
-    utils::throwIfNonZero(wiredtiger_open(_db_home.c_str(), nullptr, "create", &_conn));
+    utils::throwIfNonZero(wiredtiger_open(_db_home.c_str(), nullptr, "create,statistics=[all,clear]", &_conn));
 }
 
 ConnectionWrapper::~ConnectionWrapper()
