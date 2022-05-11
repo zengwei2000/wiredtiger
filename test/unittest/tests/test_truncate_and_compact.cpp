@@ -80,6 +80,7 @@ void dump_stats(WT_SESSION_IMPL * sessionImpl) {
     std::cout << "Statistic WT_STAT_DSRC_REC_PAGE_DELETE: "         << get_stat(cursor, WT_STAT_DSRC_REC_PAGE_DELETE) << std::endl;
     int64_t total = get_stat(cursor, WT_STAT_DSRC_BTREE_ROW_INTERNAL) + get_stat(cursor, WT_STAT_DSRC_BTREE_ROW_LEAF) ;
     std::cout << "Internal + leaf: " << total << std::endl;
+    cursor->close(cursor);
 }
 
 uint64_t get_num_key_values(WT_SESSION* session, std::string const& table_name, uint64_t timeStamp)
@@ -300,6 +301,11 @@ TEST_CASE("Truncate and compact: table", "[compact]")
     std::string table_name = "table:access2";
     std::string file_name = "file:access2.wt";
 
+    int numValuesToInsert = 100000;
+    int truncateMin = 1010000;
+    int truncateMax = 1089999;
+    int remainingAfterTruncate = 20000;
+
     // maybe these are too small
     std::string config =
       "key_format=S,value_format=S,allocation_size=1024b,internal_page_max=1024b,leaf_page_max=1024b";
@@ -318,8 +324,8 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 
         // Add some key/value pairs, with timestamp 0x10
         std::cout << "Add some key/value pairs" << std::endl;
-        int maxOuter = 100;
         int maxInner = 1000;
+        int maxOuter = numValuesToInsert / maxInner;
         for (int outer = 0; outer < maxOuter; outer++) {
             REQUIRE(session->begin_transaction(session, nullptr) == 0);
             for (int inner = 0; inner < maxInner; inner++) {
@@ -347,19 +353,22 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 
         WT_CURSOR* truncate_start = nullptr;
         REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, nullptr, &truncate_start) == 0);
-        std::string key_start = testcase_key_base + std::to_string(1010000);
+        std::string key_start = testcase_key_base + std::to_string(truncateMin);
         truncate_start->set_key(truncate_start, key_start.c_str());
         REQUIRE(truncate_start->search(truncate_start) == 0);
 
         WT_CURSOR* truncate_end = nullptr;
         REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, nullptr, &truncate_end) == 0);
-        std::string key_end = testcase_key_base + std::to_string(1089999);
+        std::string key_end = testcase_key_base + std::to_string(truncateMax);
         truncate_end->set_key(truncate_end, key_end.c_str());
         REQUIRE(truncate_end->search(truncate_end) == 0);
         REQUIRE(session->truncate(session, nullptr, truncate_start, truncate_end, nullptr) == 0);
 
         REQUIRE(truncate_start->close(truncate_start) == 0);
         REQUIRE(truncate_end->close(truncate_end) == 0);
+
+        dump_stats(sessionImpl);
+        std::cout << "Commit the truncate" << std::endl;
         std::string transactionConfig = std::string("commit_timestamp=30");
         REQUIRE(session->commit_transaction(session, transactionConfig.data()) == 0); // set ts here.
         dump_stats(sessionImpl);
@@ -368,7 +377,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 
     {
         // Read the key/value pairs, at timestamp 0x40 (ie after everything)
-        REQUIRE(get_num_key_values(session, table_name, 0x40) == 20000);
+        REQUIRE(get_num_key_values(session, table_name, 0x40) == remainingAfterTruncate);
     }
 
     {
@@ -395,7 +404,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
     }
     {
         // Read the key/value pairs, at timestamp 0x20 (ie before the truncate)
-        REQUIRE(get_num_key_values(session, table_name, 0x20) == 100000);
+        //REQUIRE(get_num_key_values(session, table_name, 0x20) == numValuesToInsert);
     }
 
     //    set oldest and stable timestamps
@@ -403,6 +412,20 @@ TEST_CASE("Truncate and compact: table", "[compact]")
     REQUIRE(conn.getWtConnection()->set_timestamp(conn.getWtConnection(), "stable_timestamp=35") == 0);
     REQUIRE(conn.getWtConnection()->set_timestamp(conn.getWtConnection(), "oldest_timestamp=35") == 0);
     dump_stats(sessionImpl);
+
+    {
+        // Attempt to trigger eviction
+        std::cout << "Try to trigger eviction" << std::endl;
+        WT_CURSOR* cursor = nullptr;
+        REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, "debug=(release_evict=true)", &cursor) == 0);
+        for (int i = truncateMin; i <= truncateMax; i++) {
+            std::string key = testcase_key_base + std::to_string(i);
+            cursor->set_key(cursor, key.c_str());
+            int ret = cursor->search(cursor);
+            cursor->reset(cursor);
+        }
+        REQUIRE(cursor->close(cursor) == 0);
+    }
 
 #ifdef HAVE_DIAGNOSTIC
     //analyse_tree(sessionImpl, file_name);
@@ -423,7 +446,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 #endif
 
     // Read the key/value pairs, at timestamp 0x40 (ie after everything)
-    REQUIRE(get_num_key_values(session, table_name, 0x40) == 20000);
+    REQUIRE(get_num_key_values(session, table_name, 0x40) == remainingAfterTruncate);
 
     // TODO: We get a "scratch buffer allocated and never discarded" warning.
     //       It seems to come from __wt_debug_tree_all.
