@@ -8,6 +8,8 @@
 
 #include <catch2/catch.hpp>
 #include <iostream>
+#include <vector>
+#include <unordered_map>
 #include "wt_internal.h"
 #include "wiredtiger.h"
 #include "extern.h"
@@ -67,21 +69,6 @@ void dump_stats(WT_SESSION_IMPL * sessionImpl) {
     WT_SESSION* session = &(sessionImpl->iface);
     WT_CURSOR* cursor = nullptr;
     REQUIRE(session->open_cursor(session, "statistics:table:access2", nullptr, nullptr, &cursor) == 0);
-    // Read the key/value pairs
-//    REQUIRE(cursor->reset(cursor) == 0);
-//    int ret = cursor->next(cursor);
-//    REQUIRE(ret == 0);
-//    while (ret == 0) {
-//        char const *key = nullptr;
-//        uint64_t value = 0;
-////        REQUIRE(cursor->get_key(cursor, &key) == 0);
-//        const char *desc, *pval;
-////        (ret = cursor->get_value(cursor, &desc, &pval, &v))
-//        REQUIRE(cursor->get_value(cursor, &desc, &pval, &value) == 0);
-//        std::cout << desc << " : " << value << std::endl;
-//        ret = cursor->next(cursor);
-//    }
-//    REQUIRE(ret == WT_NOTFOUND); /* Check for end-of-table. */
 
     std::cout << "Statistic WT_STAT_DSRC_BTREE_ROW_INTERNAL: "      << get_stat(cursor, WT_STAT_DSRC_BTREE_ROW_INTERNAL)  << std::endl;
     std::cout << "Statistic WT_STAT_DSRC_BTREE_ROW_LEAF: "          << get_stat(cursor, WT_STAT_DSRC_BTREE_ROW_LEAF)      << std::endl;
@@ -91,11 +78,15 @@ void dump_stats(WT_SESSION_IMPL * sessionImpl) {
     std::cout << "Statistic WT_STAT_DSRC_CACHE_READ_DELETED: "      << get_stat(cursor, WT_STAT_DSRC_CACHE_READ_DELETED) << std::endl;
     std::cout << "Statistic WT_STAT_DSRC_REC_PAGE_DELETE_FAST: "    << get_stat(cursor, WT_STAT_DSRC_REC_PAGE_DELETE_FAST) << std::endl;
     std::cout << "Statistic WT_STAT_DSRC_REC_PAGE_DELETE: "         << get_stat(cursor, WT_STAT_DSRC_REC_PAGE_DELETE) << std::endl;
+    int64_t total = get_stat(cursor, WT_STAT_DSRC_BTREE_ROW_INTERNAL) + get_stat(cursor, WT_STAT_DSRC_BTREE_ROW_LEAF) ;
+    std::cout << "Internal + leaf: " << total << std::endl;
 }
 
-uint64_t get_num_key_values(WT_SESSION* session, WT_CURSOR* cursor, uint64_t timeStamp)
+uint64_t get_num_key_values(WT_SESSION* session, std::string const& table_name, uint64_t timeStamp)
 {
-    // Read the key/value pairs, at timestamp 0x20 (ie before the truncate)
+    WT_CURSOR* cursor = nullptr;
+    REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, nullptr, &cursor) == 0);
+
     REQUIRE(session->begin_transaction(session, nullptr) == 0);
     REQUIRE(session->timestamp_transaction_uint(session, WT_TS_TXN_TYPE_READ, timeStamp) == 0);
     char const *key = nullptr;
@@ -117,6 +108,7 @@ uint64_t get_num_key_values(WT_SESSION* session, WT_CURSOR* cursor, uint64_t tim
     REQUIRE(session->commit_transaction(session, nullptr) == 0);
     std::cout << "number of key:value pairs: " << numValues <<
       " at timestamp: 0x" << std::hex << timeStamp << std::dec << std::endl;
+    REQUIRE(cursor->close(cursor) == 0);
     return numValues;
 }
 
@@ -133,10 +125,27 @@ int depth_in_tree(WT_REF* ref) {
 }
 
 
+void dump_ref_map(std::unordered_multimap<WT_REF*, WT_REF*> const& ref_map, WT_REF* parent)
+{
+    REQUIRE(parent != nullptr);
+    int depth = depth_in_tree(parent);
+    std::string indent(2 * depth, ' ');
+    auto range = ref_map.equal_range(parent);
+    for (auto iter = range.first; iter != range.second; ++iter) {
+        if (F_ISSET(iter->first, WT_REF_FLAG_INTERNAL)) {
+            std::cout << indent << "depth: " << depth << ": parent ref = " << iter->first
+                      << ", child ref =" << iter->second << std::endl;
+            dump_ref_map(ref_map, iter->second);
+        }
+    }
+}
+
+
 void
 cache_walk(WT_SESSION_IMPL *session)
 {
     std::cout << "cache_walk:" << std::endl;
+    std::unordered_multimap<WT_REF*, WT_REF*> ref_map; // Maps parents to children
     WT_BTREE *btree;
     WT_CACHE *cache;
     WT_PAGE *page;
@@ -158,6 +167,9 @@ cache_walk(WT_SESSION_IMPL *session)
     walk_count = written_size_cnt = written_size_sum = 0;
     min_written_size = UINT64_MAX;
 
+    std::vector<int> ref_state_counts(std::numeric_limits<uint8_t>::max(), 0);
+
+    WT_REF* root = nullptr;
     next_walk = NULL;
     while (__wt_tree_walk_count(session, &next_walk, &walk_count,
              WT_READ_CACHE | WT_READ_NO_EVICT | WT_READ_NO_GEN | WT_READ_NO_WAIT |
@@ -165,6 +177,7 @@ cache_walk(WT_SESSION_IMPL *session)
       next_walk != NULL) {
         ++seen_count;
         page = next_walk->page;
+        ++ref_state_counts[next_walk->state];
         if (page->memory_footprint > max_pagesize)
             max_pagesize = page->memory_footprint;
 
@@ -195,23 +208,42 @@ cache_walk(WT_SESSION_IMPL *session)
 
         if (F_ISSET(next_walk, WT_REF_FLAG_INTERNAL)) {
             ++pages_internal;
-            std::cout << indent << "Internal page: " << page << std::endl;
+            //std::cout << indent << "Internal page: " << page << std::endl;
         } else {
             ++pages_leaf;
-            std::cout << indent << "Leaf page: " << page << std::endl;
+//            std::cout << indent << "Leaf page: " << page << std::endl;
         }
 
-        std::cout << indent << "  ref: " << next_walk << std::endl;
-        std::cout << indent << "  home: " << next_walk->home << std::endl;
         if (next_walk->home != nullptr) {
-            WT_REF* parent_ref = next_walk->home->u.intl.parent_ref;
-            std::cout << indent << "  parent ref: " << parent_ref << std::endl;
+            WT_REF *parent_ref = next_walk->home->u.intl.parent_ref;
+            //std::cout << indent << "  ref: " << next_walk << ", parent ref: " << parent_ref << std::endl;
+            ref_map.insert({parent_ref, next_walk});
         }
-        std::cout << indent << "  depth in tree: " << depth << std::endl;
+
+        // Debugging only
+//        if (F_ISSET(next_walk, WT_REF_FLAG_INTERNAL))
+//        {
+//            std::cout << indent << "  ref: " << next_walk << std::endl;
+//            std::cout << indent << "  home: " << next_walk->home << std::endl;
+//            if (next_walk->home != nullptr) {
+//                WT_REF *parent_ref = next_walk->home->u.intl.parent_ref;
+//                std::cout << indent << "  parent ref: " << parent_ref << std::endl;
+//            }
+//            std::cout << indent << "  depth in tree: " << depth << std::endl;
+//
+//            {
+//                uint8_t previous_state = 0;
+//                WT_REF_LOCK(session, next_walk, &previous_state);
+//                std::cout << indent << "  state: " << (int)previous_state << std::endl;
+//                WT_REF_UNLOCK(next_walk, previous_state);
+//            }
+//        }
 
         /* Skip root pages since they are never considered */
-        if (__wt_ref_is_root(next_walk))
+        if (__wt_ref_is_root(next_walk)) {
+            root = next_walk;
             continue;
+        }
 
         if (page->evict_pass_gen == 0) {
             unvisited_age_gap_sum += (cache->evict_pass_gen - page->cache_create_gen);
@@ -225,7 +257,13 @@ cache_walk(WT_SESSION_IMPL *session)
             ++visited_count;
         }
     }
-
+    std::cout << "ending cache walk, root = " << root << std::endl;
+    std::cout << "WT_REF count with state WT_REF_DISK:    " << ref_state_counts[WT_REF_DISK] << std::endl;
+    std::cout << "WT_REF count with state WT_REF_DELETED: " << ref_state_counts[WT_REF_DELETED] << std::endl;
+    std::cout << "WT_REF count with state WT_REF_LOCKED:  " << ref_state_counts[WT_REF_LOCKED] << std::endl;
+    std::cout << "WT_REF count with state WT_REF_MEM:     " << ref_state_counts[WT_REF_MEM] << std::endl;
+    std::cout << "WT_REF count with state WT_REF_SPLIT:   " << ref_state_counts[WT_REF_SPLIT] << std::endl;
+    //dump_ref_map(ref_map, root);
 }
 
 void analyse_tree(WT_SESSION_IMPL* sessionImpl, std::string const& file_name) {
@@ -239,7 +277,8 @@ void analyse_tree(WT_SESSION_IMPL* sessionImpl, std::string const& file_name) {
     REQUIRE(ref != nullptr);
     //REQUIRE(__wt_debug_tree_all(sessionImpl, nullptr, ref, nullptr) == 0);
     __wt_curstat_cache_walk(sessionImpl);
-    //cache_walk(sessionImpl);
+    //dump_stats(sessionImpl);
+    cache_walk(sessionImpl);
 }
 
 
@@ -273,10 +312,10 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 
     dump_stats(sessionImpl);
 
-    WT_CURSOR* cursor = nullptr;
-    REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, nullptr, &cursor) == 0);
-
     {
+        WT_CURSOR* cursor = nullptr;
+        REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, nullptr, &cursor) == 0);
+
         // Add some key/value pairs, with timestamp 0x10
         std::cout << "Add some key/value pairs" << std::endl;
         int maxOuter = 100;
@@ -294,27 +333,10 @@ TEST_CASE("Truncate and compact: table", "[compact]")
             std::string transactionConfig = std::string("commit_timestamp=10");
             REQUIRE(session->commit_transaction(session, transactionConfig.data()) == 0); // set ts here.
         }
-        //REQUIRE(session->checkpoint(session, nullptr) == 0);
+
+        REQUIRE(cursor->close(cursor) == 0);
         dump_stats(sessionImpl);
     }
-
-//    {
-//        // Read the key/value pairs
-//        char const *key = nullptr;
-//        char const *value = nullptr;
-//        REQUIRE(cursor->reset(cursor) == 0);
-//        int ret = cursor->next(cursor);
-//        REQUIRE(ret == 0);
-//        while (ret == 0) {
-//            REQUIRE(cursor->get_key(cursor, &key) == 0);
-//            REQUIRE(cursor->get_value(cursor, &value) == 0);
-//            std::cout << key << " : " << value <<
-//              " (via struct, key : " << (const char*) cursor->key.data <<
-//              ", value : " << (const char*) cursor->value.data << ")" << std::endl;
-//            ret = cursor->next(cursor);
-//        }
-//        REQUIRE(ret == WT_NOTFOUND); /* Check for end-of-table. */
-//    }
 
     {
         // Truncate, with timestamp = 0x30
@@ -325,7 +347,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 
         WT_CURSOR* truncate_start = nullptr;
         REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, nullptr, &truncate_start) == 0);
-        std::string key_start = testcase_key_base + std::to_string(1003000);
+        std::string key_start = testcase_key_base + std::to_string(1010000);
         truncate_start->set_key(truncate_start, key_start.c_str());
         REQUIRE(truncate_start->search(truncate_start) == 0);
 
@@ -336,14 +358,17 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         REQUIRE(truncate_end->search(truncate_end) == 0);
         REQUIRE(session->truncate(session, nullptr, truncate_start, truncate_end, nullptr) == 0);
 
+        REQUIRE(truncate_start->close(truncate_start) == 0);
+        REQUIRE(truncate_end->close(truncate_end) == 0);
         std::string transactionConfig = std::string("commit_timestamp=30");
         REQUIRE(session->commit_transaction(session, transactionConfig.data()) == 0); // set ts here.
         dump_stats(sessionImpl);
+        //sleep(5);
     }
 
     {
         // Read the key/value pairs, at timestamp 0x40 (ie after everything)
-        REQUIRE(get_num_key_values(session, cursor, 0x40) == 13000);
+        REQUIRE(get_num_key_values(session, table_name, 0x40) == 20000);
     }
 
     {
@@ -351,10 +376,11 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         std::cout << "Compact (0):" << std::endl;
         REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
         dump_stats(sessionImpl);
+        //sleep(5);
     }
 
 #ifdef HAVE_DIAGNOSTIC
-    analyse_tree(sessionImpl, file_name);
+    //analyse_tree(sessionImpl, file_name);
 #endif
 
     {
@@ -365,31 +391,11 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         std::cout << "Compact (1):" << std::endl;
         REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
         dump_stats(sessionImpl);
+        //sleep(5);
     }
     {
         // Read the key/value pairs, at timestamp 0x20 (ie before the truncate)
-        REQUIRE(get_num_key_values(session, cursor, 0x20) == 100000);
-//        REQUIRE(session->begin_transaction(session, nullptr) == 0);
-//        REQUIRE(session->timestamp_transaction_uint(session, WT_TS_TXN_TYPE_READ, 0x20) == 0);
-//        char const *key = nullptr;
-//        char const *value = nullptr;
-//        REQUIRE(cursor->reset(cursor) == 0);
-//        int ret = cursor->next(cursor);
-//        REQUIRE(ret == 0);
-//        int numValues = 0;
-//        while (ret == 0) {
-//            REQUIRE(cursor->get_key(cursor, &key) == 0);
-//            REQUIRE(cursor->get_value(cursor, &value) == 0);
-//            numValues++;
-////            std::cout << key << " : " << value <<
-////              " (via struct, key : " << (const char*) cursor->key.data <<
-////              ", value : " << (const char*) cursor->value.data << ")" << std::endl;
-//            ret = cursor->next(cursor);
-//        }
-//        REQUIRE(ret == WT_NOTFOUND); // Check for end-of-table.
-//        REQUIRE(session->commit_transaction(session, nullptr) == 0);
-//        std::cout << "number of key:value pairs: " << numValues << std::endl;
-//        REQUIRE(numValues == 100000); // We should see the number of values from prior to the truncate
+        REQUIRE(get_num_key_values(session, table_name, 0x20) == 100000);
     }
 
     //    set oldest and stable timestamps
@@ -399,7 +405,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
     dump_stats(sessionImpl);
 
 #ifdef HAVE_DIAGNOSTIC
-    analyse_tree(sessionImpl, file_name);
+    //analyse_tree(sessionImpl, file_name);
 #endif
 
     {
@@ -407,9 +413,6 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         std::cout << "Compact (2):" << std::endl;
         REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
         dump_stats(sessionImpl);
-//        std::cout << "sleep:" << std::endl;
-//        sleep(10);
-//        dump_stats(sessionImpl);
         std::cout << "Checkpoint (2):" << std::endl;
         REQUIRE(session->checkpoint(session, nullptr) == 0);
         dump_stats(sessionImpl);
@@ -417,11 +420,10 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 
 #ifdef HAVE_DIAGNOSTIC
     analyse_tree(sessionImpl, file_name);
-    dump_stats(sessionImpl);
 #endif
 
     // Read the key/value pairs, at timestamp 0x40 (ie after everything)
-    REQUIRE(get_num_key_values(session, cursor, 0x40) == 13000);
+    REQUIRE(get_num_key_values(session, table_name, 0x40) == 20000);
 
     // TODO: We get a "scratch buffer allocated and never discarded" warning.
     //       It seems to come from __wt_debug_tree_all.
