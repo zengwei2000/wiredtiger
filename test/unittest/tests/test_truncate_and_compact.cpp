@@ -282,6 +282,21 @@ void analyse_tree(WT_SESSION_IMPL* sessionImpl, std::string const& file_name) {
     cache_walk(sessionImpl);
 }
 
+void triggerEviction(WT_SESSION* session, std::string const& table_name, int keyMin, int keyMax)
+{
+    // Attempt to trigger eviction
+    std::cout << "Try to trigger eviction" << std::endl;
+    WT_CURSOR* cursor = nullptr;
+    REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, "debug=(release_evict=true)", &cursor) == 0);
+    for (int i = keyMin; i <= keyMax; i++) {
+        std::string key = testcase_key_base + std::to_string(i);
+        cursor->set_key(cursor, key.c_str());
+        int ret = cursor->search(cursor);
+        cursor->reset(cursor);
+    }
+    REQUIRE(cursor->close(cursor) == 0);
+    //dump_stats(sessionImpl);
+}
 
 TEST_CASE("Truncate and compact: table", "[compact]")
 {
@@ -380,31 +395,31 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         REQUIRE(get_num_key_values(session, table_name, 0x40) == remainingAfterTruncate);
     }
 
-    {
-        // Compact
-        std::cout << "Compact (0):" << std::endl;
-        REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
-        dump_stats(sessionImpl);
-        //sleep(5);
-    }
-
-#ifdef HAVE_DIAGNOSTIC
-    //analyse_tree(sessionImpl, file_name);
-#endif
-
-    {
-        std::cout << "Checkpoint (1):" << std::endl;
-        REQUIRE(session->checkpoint(session, nullptr) == 0);
-        dump_stats(sessionImpl);
-        // Compact
-        std::cout << "Compact (1):" << std::endl;
-        REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
-        dump_stats(sessionImpl);
-        //sleep(5);
-    }
+//    {
+//        // Compact
+//        std::cout << "Compact (0):" << std::endl;
+//        REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
+//        dump_stats(sessionImpl);
+//        //sleep(5);
+//    }
+//
+//#ifdef HAVE_DIAGNOSTIC
+//    //analyse_tree(sessionImpl, file_name);
+//#endif
+//
+//    {
+//        std::cout << "Checkpoint (1):" << std::endl;
+//        REQUIRE(session->checkpoint(session, nullptr) == 0);
+//        dump_stats(sessionImpl);
+//        // Compact
+//        std::cout << "Compact (1):" << std::endl;
+//        REQUIRE(session->compact(session, table_name.c_str(), nullptr) == 0);
+//        dump_stats(sessionImpl);
+//        //sleep(5);
+//    }
     {
         // Read the key/value pairs, at timestamp 0x20 (ie before the truncate)
-        //REQUIRE(get_num_key_values(session, table_name, 0x20) == numValuesToInsert);
+        REQUIRE(get_num_key_values(session, table_name, 0x20) == numValuesToInsert);
     }
 
     //    set oldest and stable timestamps
@@ -413,19 +428,9 @@ TEST_CASE("Truncate and compact: table", "[compact]")
     REQUIRE(conn.getWtConnection()->set_timestamp(conn.getWtConnection(), "oldest_timestamp=35") == 0);
     dump_stats(sessionImpl);
 
-    {
-        // Attempt to trigger eviction
-        std::cout << "Try to trigger eviction" << std::endl;
-        WT_CURSOR* cursor = nullptr;
-        REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, "debug=(release_evict=true)", &cursor) == 0);
-        for (int i = truncateMin; i <= truncateMax; i++) {
-            std::string key = testcase_key_base + std::to_string(i);
-            cursor->set_key(cursor, key.c_str());
-            int ret = cursor->search(cursor);
-            cursor->reset(cursor);
-        }
-        REQUIRE(cursor->close(cursor) == 0);
-    }
+    triggerEviction(session, table_name, truncateMin, truncateMax);
+//    sleep(10);
+//    dump_stats(sessionImpl);
 
 #ifdef HAVE_DIAGNOSTIC
     //analyse_tree(sessionImpl, file_name);
