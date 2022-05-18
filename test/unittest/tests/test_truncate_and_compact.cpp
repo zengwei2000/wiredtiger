@@ -298,7 +298,7 @@ void triggerEviction(WT_SESSION* session, std::string const& table_name, int key
     //dump_stats(sessionImpl);
 }
 
-TEST_CASE("Truncate and compact: table", "[compact]")
+void test_truncate_and_evict()
 {
     // The goal of this test is to ensure that truncate and compact work together
     //
@@ -310,16 +310,23 @@ TEST_CASE("Truncate and compact: table", "[compact]")
     // 4. Run a compact operation, while a reader is trying to
     //    read some of the data deleted by the truncate, and ensure that this works.
 
+    std::cout << "==== test_truncate_and_evict() ====" << std::endl;
     ConnectionWrapper conn(utils::UnitTestDatabaseHome);
     WT_SESSION_IMPL* sessionImpl = conn.createSession();
     WT_SESSION* session = &(sessionImpl->iface);
     std::string table_name = "table:access2";
     std::string file_name = "file:access2.wt";
 
-    int numValuesToInsert = 100000;
-    int truncateMin = 1010000;
-    int truncateMax = 1089999;
-    int remainingAfterTruncate = 20000;
+    const int baseIndex = 10000000;
+    const int numValuesToInsert = 100000;
+    const int truncateOffsetMin = 10000;
+    const int truncateOffsetMax = 89999;
+    const int truncateMin = baseIndex + truncateOffsetMin;
+    const int truncateMax = baseIndex + truncateOffsetMax;
+    const int numToRemove = truncateMax - truncateMin + 1; // +1 because truncate ranges will be inclusive
+    const int remainingAfterTruncate = numValuesToInsert - numToRemove;
+    static_assert(numToRemove > 0);
+    static_assert(remainingAfterTruncate > 0);
 
     // maybe these are too small
     std::string config =
@@ -338,13 +345,13 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         REQUIRE(session->open_cursor(session, table_name.c_str(), nullptr, nullptr, &cursor) == 0);
 
         // Add some key/value pairs, with timestamp 0x10
-        std::cout << "Add some key/value pairs" << std::endl;
+        std::cout << "Add " << numValuesToInsert << " key/value pairs" << std::endl;
         int maxInner = 1000;
         int maxOuter = numValuesToInsert / maxInner;
         for (int outer = 0; outer < maxOuter; outer++) {
             REQUIRE(session->begin_transaction(session, nullptr) == 0);
             for (int inner = 0; inner < maxInner; inner++) {
-                int index = 1000000 + (outer * maxInner) + inner;
+                int index = baseIndex + (outer * maxInner) + inner;
                 std::basic_string key = testcase_key_base + std::to_string(index);
                 std::basic_string value = testcase_value_base + std::to_string(index);
                 cursor->set_key(cursor, key.c_str());
@@ -363,7 +370,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         // Truncate, with timestamp = 0x30
         // Need to trigger fast truncate, which will truncate whole pages at one.
         // Need to fast truncate an internal page as well for this test.
-        std::cout << "Truncate" << std::endl;
+        std::cout << "Truncating to remove " << numToRemove << " key/values" << std::endl;
         REQUIRE(session->begin_transaction(session, nullptr) == 0);
 
         WT_CURSOR* truncate_start = nullptr;
@@ -428,6 +435,8 @@ TEST_CASE("Truncate and compact: table", "[compact]")
     REQUIRE(conn.getWtConnection()->set_timestamp(conn.getWtConnection(), "oldest_timestamp=35") == 0);
     dump_stats(sessionImpl);
 
+    std::cout << std::flush;
+
     triggerEviction(session, table_name, truncateMin, truncateMax);
 //    sleep(10);
 //    dump_stats(sessionImpl);
@@ -455,4 +464,16 @@ TEST_CASE("Truncate and compact: table", "[compact]")
 
     // TODO: We get a "scratch buffer allocated and never discarded" warning.
     //       It seems to come from __wt_debug_tree_all.
+}
+
+TEST_CASE("Truncate and compact: table", "[compact]")
+{
+    for (int i = 1; i <= 500; ++i) {
+        if (i > 1)
+            std::cout << std::endl;
+        std::cout << "============================================" << std::endl;
+        std::cout << "Truncate and compact: table - iteration: " << i << std::endl;
+        test_truncate_and_evict();
+        sleep(1);
+    }
 }
