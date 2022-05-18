@@ -474,6 +474,7 @@ TEST_CASE("Truncate and compact: table", "[compact]")
         std::cout << "============================================" << std::endl;
         std::cout << "Truncate and compact: table - iteration: " << i << std::endl;
         test_truncate_and_evict();
-        sleep(1);
+        std::cout << "Sleeping() Zzz..." << std::endl;
+        sleep(2);
     }
 }
