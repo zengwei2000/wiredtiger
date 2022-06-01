@@ -386,6 +386,7 @@ void test_truncate_and_evict()
         std::string key_end = testcase_key_base + std::to_string(truncateMax);
         truncate_end->set_key(truncate_end, key_end.c_str());
         REQUIRE(truncate_end->search(truncate_end) == 0);
+
         REQUIRE(session->truncate(session, nullptr, truncate_start, truncate_end, nullptr) == 0);
 
         REQUIRE(truncate_start->close(truncate_start) == 0);
