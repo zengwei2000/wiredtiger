@@ -30,25 +30,25 @@
 #   Test that compact doesn't reduce the file size when there are overflow values at the
 #   end of file.
 #
+import time
 
-import wttest
+import wttest, sys
 from wiredtiger import stat
+import queue, threading, wttest
+from wtthread import checkpoint_thread, op_thread
 
 # from build.lang.python.wiredtiger.swig_wiredtiger import WT_TS_TXN_TYPE_READ
 from wtscenario import make_scenarios
+
+
+def print_err(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 
 class test_compact04(wttest.WiredTigerTestCase):
     uri = 'table:test_compact04'
     testcase_key_base = "key "
     testcase_value_base = "a really long string and a value "
-
-    # Enable stats and use a cache size that can fit table in the memory.
-    # conn_config = 'statistics=(all),cache_size=100MB'
-
-    # normalValue = "abcde" * 10
-    # overflowValue = "abcde" * 1000
-    # num_records = 100000
 
     def get_num_key_values(self, time_stamp: int):
         cursor = self.session.open_cursor(self.uri, None)
@@ -66,7 +66,17 @@ class test_compact04(wttest.WiredTigerTestCase):
         cursor.close()
         return num_values
 
-    def test_compact04(self):
+    def trigger_eviction(self, key_min: int, key_max: int):
+        cursor = self.session.open_cursor(self.uri, None, "debug=(release_evict=true)")
+        for index in range(key_min, key_max):
+            key = self.testcase_key_base + str(index)
+            cursor.set_key(key)
+            cursor.search()
+            cursor.reset()
+            self.session.compact(self.uri)
+        cursor.close()
+
+    def perform_test(self):
         base_index = 10000000
         num_values_to_insert = 100000
         truncate_offset_min = 10000
@@ -96,14 +106,13 @@ class test_compact04(wttest.WiredTigerTestCase):
             self.assertEqual(self.session.commit_transaction(), 0)
         cursor.close()
 
-        # current_num_keys = self.get_num_key_values(time_stamp=20)
-        # self.assertEqual(current_num_keys, num_values_to_insert)
-        #
-        # self.session.checkpoint()
-        #
-        # current_num_keys = self.get_num_key_values(time_stamp=20)
-        # self.assertEqual(current_num_keys, num_values_to_insert)
+        # done = threading.Event()
+        # ckpt = checkpoint_thread(self.conn, done)
+        # work_queue = queue.Queue()
+        # op_threads = []
 
+        # try:
+        #     ckpt.start()
         # Truncate, with timestamp = 0x30
         # Need to trigger fast truncate, which will truncate whole pages at one.
         # Need to fast truncate an internal page as well for this test.
@@ -119,6 +128,21 @@ class test_compact04(wttest.WiredTigerTestCase):
         cursor_start.close()
         cursor_end.close()
 
+        self.trigger_eviction(truncate_min, truncate_min + 1)
+
+        # except Exception:
+        #     # Deplete the work queue if there's an error.
+        #     while not work_queue.empty():
+        #         work_queue.get()
+        #         work_queue.task_done()
+        #     raise
+        # finally:
+        #     work_queue.join()
+        #     done.set()
+        #     for t in op_threads:
+        #         t.join()
+        #     ckpt.join()
+
         self.session.checkpoint()
 
         current_num_keys = self.get_num_key_values(time_stamp=0x40)
@@ -131,6 +155,10 @@ class test_compact04(wttest.WiredTigerTestCase):
                                 ',stable_timestamp=' + self.timestamp_str(35))
 
         self.session.compact(self.uri)
+
+    def test_compact04(self):
+        for i in range(1):
+            self.perform_test()
 
 
 if __name__ == '__main__':
