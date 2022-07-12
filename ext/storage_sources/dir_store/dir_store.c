@@ -83,6 +83,8 @@ typedef struct {
     /*
      * Statistics are collected but not yet exposed.
      */
+    uint64_t cache_over_cap;/* Number of times we did not copy object into cache,
+                             * because it would have been over capacity. */
     uint64_t fh_ops;        /* Non-read/write operations in file handles */
     uint64_t object_writes; /* (What would be) writes to the cloud */
     uint64_t object_reads;  /* (What would be) reads to the cloud */
@@ -107,6 +109,8 @@ typedef struct {
     char *bucket_dir;     /* Directory that stands in for cloud storage bucket */
     char *cache_dir;      /* Directory for cached objects */
     const char *home_dir; /* Owned by the connection */
+
+    uint64_t cache_capacity; /* Cap on the amount of data in cache directory */
 } DIR_STORE_FILE_SYSTEM;
 
 typedef struct dir_store_file_handle {
@@ -131,6 +135,7 @@ static int dir_store_err(DIR_STORE *, WT_SESSION *, int, const char *, ...);
 static int dir_store_file_copy(
   DIR_STORE *, WT_SESSION *, const char *, const char *, WT_FS_OPEN_FILE_TYPE, bool);
 static int dir_store_get_directory(const char *, const char *, ssize_t len, bool, char **);
+static bool dir_store_over_capacity(WT_FILE_SYSTEM *, WT_SESSION *, char *);
 static int dir_store_path(WT_FILE_SYSTEM *, const char *, const char *, char **);
 static int dir_store_stat(
   WT_FILE_SYSTEM *, WT_SESSION *, const char *, const char *, bool, struct stat *);
@@ -195,15 +200,17 @@ dir_store_configure(DIR_STORE *dir_store, WT_CONFIG_ARG *config)
 {
     int ret;
 
-    if ((ret = dir_store_configure_int(dir_store, config, "delay_ms", &dir_store->delay_ms)) != 0)
+    if ((ret = dir_store_configure_int(
+             dir_store, config, "delay_ms", &dir_store->delay_ms)) != 0)
         return (ret);
     if ((ret = dir_store_configure_int(
-           dir_store, config, "force_delay", &dir_store->force_delay)) != 0)
+             dir_store, config, "force_delay", &dir_store->force_delay)) != 0)
         return (ret);
     if ((ret = dir_store_configure_int(
            dir_store, config, "force_error", &dir_store->force_error)) != 0)
         return (ret);
-    if ((ret = dir_store_configure_int(dir_store, config, "verbose", &dir_store->verbose)) != 0)
+    if ((ret = dir_store_configure_int(
+             dir_store, config, "verbose", &dir_store->verbose)) != 0)
         return (ret);
 
     return (0);
@@ -375,6 +382,42 @@ dir_store_home_path(WT_FILE_SYSTEM *file_system, const char *name, char **pathp)
 }
 
 /*
+ * dir_store_over_capacity --
+ *       Check if we will exceed cache capacity after copying over the new object.
+ */
+static bool
+dir_store_over_capacity(WT_FILE_SYSTEM *file_system,  WT_SESSION *session, char *new_object_path)
+{
+    char *cache_dir;
+    struct stat sb;
+    wt_off_t cache_size, new_object_size;
+    int ret;
+
+    cache_dir = ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_dir;
+    cache_size = 0;
+    ret = true;
+
+    /* Find the current cache size and the size */
+    if (cache_dir != NULL && (ret = stat(cache_dir, &sb)) == 0)
+        cache_size = (wt_off_t)sb.st_size;
+
+    /* Find the size of the new object */
+    if (dir_store_size(file_system, session, new_object_path, &new_object_size) != 0)
+        return ret;
+
+    if (cache_size + new_object_size <= ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity)
+        ret = false;
+    else
+        VERBOSE_LS(FS2DS(file_system), "Could not copy new object of size %" PRIu64 " bytes. "
+                   "Cache size is %" PRIu64 " bytes. Cache capacity is %" PRIu64 " bytes. ",
+                   new_object_size, cache_size,
+                   ((DIR_STORE_FILE_SYSTEM*)file_system)->cache_capacity);
+
+    return ret;
+}
+
+
+/*
  * dir_store_path --
  *     Construct a pathname from the file system and dir_store name.
  */
@@ -479,7 +522,7 @@ dir_store_customize_file_system(WT_STORAGE_SOURCE *storage_source, WT_SESSION *s
 {
     DIR_STORE *dir_store;
     DIR_STORE_FILE_SYSTEM *fs;
-    WT_CONFIG_ITEM cachedir;
+    WT_CONFIG_ITEM cachecap, cachedir;
     WT_FILE_SYSTEM *wt_fs;
     int ret;
     const char *p;
@@ -501,6 +544,17 @@ dir_store_customize_file_system(WT_STORAGE_SOURCE *storage_source, WT_SESSION *s
             goto err;
         }
     }
+
+     if ((ret = dir_store->wt_api->config_get_string(
+           dir_store->wt_api, session, config, "cache_capacity", &cachecap)) != 0) {
+         if (ret == WT_NOTFOUND) {
+            ret = 0;
+            cachecap.val = 0;
+         } else {
+             ret = dir_store_err(dir_store, session, ret, "customize_file_system: config parsing");
+             goto err;
+         }
+     }
 
     if ((ret = dir_store->wt_api->file_system_get(dir_store->wt_api, session, &wt_fs)) != 0) {
         ret = dir_store_err(
@@ -557,6 +611,8 @@ dir_store_customize_file_system(WT_STORAGE_SOURCE *storage_source, WT_SESSION *s
           dir_store, session, ret, "%*s: cache directory", (int)cachedir.len, cachedir.str);
         goto err;
     }
+    fs->cache_capacity = cachecap.val;
+
     fs->file_system.fs_directory_list = dir_store_directory_list;
     fs->file_system.fs_directory_list_single = dir_store_directory_list_single;
     fs->file_system.fs_directory_list_free = dir_store_directory_list_free;
@@ -732,11 +788,14 @@ static int
 dir_store_flush_finish(WT_STORAGE_SOURCE *storage_source, WT_SESSION *session,
   WT_FILE_SYSTEM *file_system, const char *source, const char *object, const char *config)
 {
+    struct stat sb;
     DIR_STORE *dir_store;
     int ret;
     char *dest_path, *src_path;
+    wt_off_t cache_size, new_object_size;
 
     (void)config; /* unused */
+    cache_size = 0;
     dest_path = src_path = NULL;
     dir_store = (DIR_STORE *)storage_source;
     ret = 0;
@@ -752,19 +811,27 @@ dir_store_flush_finish(WT_STORAGE_SOURCE *storage_source, WT_SESSION *session,
         goto err;
 
     dir_store->op_count++;
+
+
     /*
-     * Link the object with the original dir_store object. The could be replaced by a file copy if
-     * portability is an issue.
+     * Copy the object to the cache if there is space available.
      */
-    if ((ret = link(src_path, dest_path)) != 0) {
-        ret = dir_store_err(
-          dir_store, session, errno, "ss_flush_finish link %s to %s failed", source, dest_path);
-        goto err;
+    if (!dir_store_over_capacity(file_system, session, src_path)) {
+        if ((ret = dir_store_file_copy(
+             dir_store, session, src_path, dest_path, WT_FS_OPEN_FILE_TYPE_DATA, false)) != 0) {
+            ret = dir_store_err(
+                dir_store, session, errno, "ss_flush_finish copy %s to %s failed", source,
+                dest_path);
+            goto err;
+        }
+        else {
+            /* Set the file to readonly in the cache. */
+            if ((ret = chmod(dest_path, 0444)) < 0)
+                ret = dir_store_err(dir_store, session, errno,
+                                    "%s: ss_flush_finish chmod failed", dest_path);
+        }
     }
-    /* Set the file to readonly in the cache. */
-    if (ret == 0 && (ret = chmod(dest_path, 0444)) < 0)
-        ret =
-          dir_store_err(dir_store, session, errno, "%s: ss_flush_finish chmod failed", dest_path);
+
 err:
     free(dest_path);
     free(src_path);
@@ -960,7 +1027,7 @@ dir_store_open(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *nam
     WT_FILE_SYSTEM *wt_fs;
     struct stat sb;
     int ret;
-    char *bucket_path, *cache_path;
+    char *bucket_path, *cache_path, *file_path;
 
     (void)flags; /* Unused */
 
@@ -970,7 +1037,7 @@ dir_store_open(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *nam
     dir_store_fs = (DIR_STORE_FILE_SYSTEM *)file_system;
     dir_store = dir_store_fs->dir_store;
     wt_fs = dir_store_fs->wt_fs;
-    bucket_path = cache_path = NULL;
+    bucket_path = cache_path = file_path = NULL;
 
     if ((flags & WT_FS_OPEN_READONLY) == 0 || (flags & WT_FS_OPEN_CREATE) != 0)
         return (dir_store_err(
@@ -998,6 +1065,7 @@ dir_store_open(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *nam
     }
     if ((ret = dir_store_cache_path(file_system, name, &cache_path)) != 0)
         goto err;
+
     ret = stat(cache_path, &sb);
     if (ret != 0) {
         if (errno != ENOENT) {
@@ -1014,13 +1082,25 @@ dir_store_open(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *nam
         if ((ret = dir_store_delay(dir_store)) != 0)
             goto err;
 
-        if ((ret = dir_store_file_copy(
-               dir_store, session, bucket_path, cache_path, WT_FS_OPEN_FILE_TYPE_DATA, false)) != 0)
-            goto err;
+        /*
+         * If we would be over cache capacity after copying this file, we do not
+         * copy it. We read it directly from the bucket.
+         */
+        if (dir_store_over_capacity(file_system, session, bucket_path))
+            file_path = bucket_path;
+        else {
+            if ((ret = dir_store_file_copy(dir_store, session, bucket_path, cache_path,
+                                           WT_FS_OPEN_FILE_TYPE_DATA, false)) != 0)
+                goto err;
+            else
+                file_path = cache_path;
+        }
 
         dir_store->object_reads++;
-    }
-    if ((ret = wt_fs->fs_open_file(wt_fs, session, cache_path, file_type, flags, &wt_fh)) != 0) {
+    } else
+        file_path = cache_path;
+
+    if ((ret = wt_fs->fs_open_file(wt_fs, session, file_path, file_type, flags, &wt_fh)) != 0) {
         ret = dir_store_err(dir_store, session, ret, "ss_open_object: open: %s", name);
         goto err;
     }
@@ -1217,6 +1297,7 @@ dir_store_terminate(WT_STORAGE_SOURCE *storage, WT_SESSION *session)
     return (ret);
 }
 
+
 /*
  * dir_store_file_close --
  *     ANSI C close.
@@ -1357,7 +1438,7 @@ dir_store_file_write(
 
 /*
  * wiredtiger_extension_init --
- *     A simple shared library encryption example.
+ *     Initialize this storage extension.
  */
 int
 wiredtiger_extension_init(WT_CONNECTION *connection, WT_CONFIG_ARG *config)

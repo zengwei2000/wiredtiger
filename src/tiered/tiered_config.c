@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2014-present MongoDB, Inc.
  * Copyright (c) 2008-2014 WiredTiger, Inc.
- *	All rights reserved.
+ *  All rights reserved.
  *
  * See the file LICENSE for redistribution information.
  */
@@ -60,7 +60,7 @@ __wt_tiered_bucket_config(
   WT_SESSION_IMPL *session, const char *cfg[], WT_BUCKET_STORAGE **bstoragep)
 {
     WT_BUCKET_STORAGE *bstorage, *new;
-    WT_CONFIG_ITEM auth, bucket, cachedir, name, prefix;
+    WT_CONFIG_ITEM auth, bucket, cachedir, cachecap, name, prefix;
     WT_CONNECTION_IMPL *conn;
     WT_DECL_ITEM(buf);
     WT_DECL_RET;
@@ -101,6 +101,7 @@ __wt_tiered_bucket_config(
     if (prefix.len == 0)
         WT_ERR_MSG(session, EINVAL, "table tiered storage requires bucket_prefix to be set");
     WT_ERR(__wt_config_gets(session, cfg, "tiered_storage.cache_directory", &cachedir));
+    WT_ERR(__wt_config_gets(session, cfg, "tiered_storage.cache_capacity", &cachecap));
 
     hash = __wt_hash_city64(bucket.str, bucket.len);
     hash_bucket = hash & (conn->hash_size - 1);
@@ -117,10 +118,12 @@ __wt_tiered_bucket_config(
     WT_ERR(__wt_strndup(session, bucket.str, bucket.len, &new->bucket));
     WT_ERR(__wt_strndup(session, prefix.str, prefix.len, &new->bucket_prefix));
     WT_ERR(__wt_strndup(session, cachedir.str, cachedir.len, &new->cache_directory));
+    new->cache_capacity = (uint64_t)cachecap.val;
 
     storage = nstorage->storage_source;
     if (cachedir.len != 0)
-        WT_ERR(__wt_buf_fmt(session, buf, "cache_directory=%s", new->cache_directory));
+        WT_ERR(__wt_buf_fmt(session, buf, "cache_directory=%s,cache_capacity=%lu",
+                            new->cache_directory, new->cache_capacity));
     WT_ERR(storage->ss_customize_file_system(
       storage, &session->iface, new->bucket, new->auth_token, buf->data, &new->file_system));
     new->storage_source = storage;

@@ -198,6 +198,8 @@ tiered_config = [
             a directory to store locally cached versions of files in the storage source. By
             default, it is named with \c "-cache" appended to the bucket name. A relative
             directory name is relative to the home directory'''),
+        Config('cache_capacity', '', r'''
+            the limit on how much data we can store in the local cache directory'''),
         Config('local_retention', '300', r'''
             time in seconds to retain data on tiered storage on the local tier for faster
             read access''',
