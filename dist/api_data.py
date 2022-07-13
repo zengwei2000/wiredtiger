@@ -198,8 +198,9 @@ tiered_config = [
             a directory to store locally cached versions of files in the storage source. By
             default, it is named with \c "-cache" appended to the bucket name. A relative
             directory name is relative to the home directory'''),
-        Config('cache_capacity', '', r'''
-            the limit on how much data we can store in the local cache directory'''),
+        Config('cache_capacity', '1TB', r'''
+            the limit on how much data we can store in the local cache directory''',
+			   min='0'),
         Config('local_retention', '300', r'''
             time in seconds to retain data on tiered storage on the local tier for faster
             read access''',
@@ -219,6 +220,9 @@ tiered_tree_config = [
         a directory to store locally cached versions of files in the storage source. By default,
         it is named with \c "-cache" appended to the bucket name. A relative directory name
         is relative to the home directory'''),
+	Config('cache_capacity', '1TB', r'''
+       the limit on how much data we can store in the local cache directory''',
+	   min='0'),
 ]
 
 file_runtime_config = common_runtime_config + [
@@ -983,6 +987,9 @@ wiredtiger_open_tiered_storage_configuration = [
             a directory to store locally cached versions of files in the storage source. By
             default, it is named with \c "-cache" appended to the bucket name. A relative
             directory name is relative to the home directory'''),
+		Config('cache_capacity', '1TB', r'''
+            the limit on how much data we can store in the local cache directory''',
+			   min='0'),
         Config('interval', '60', r'''
             interval in seconds at which to check for tiered storage related work to perform''',
             min=1, max=1000),

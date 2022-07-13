@@ -395,25 +395,32 @@ dir_store_over_capacity(WT_FILE_SYSTEM *file_system,  WT_SESSION *session, char 
 
     cache_dir = ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_dir;
     cache_size = 0;
-    ret = true;
 
     /* Find the current cache size and the size */
     if (cache_dir != NULL && (ret = stat(cache_dir, &sb)) == 0)
         cache_size = (wt_off_t)sb.st_size;
 
     /* Find the size of the new object */
-    if (dir_store_size(file_system, session, new_object_path, &new_object_size) != 0)
-        return ret;
+	if (new_object_path != NULL && (ret = stat(new_object_path, &sb)) == 0)
+        new_object_size = (wt_off_t)sb.st_size;
 
-    if (cache_size + new_object_size <= ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity)
-        ret = false;
-    else
+	printf("cache size = %" PRIu64 " bytes.\n", cache_size);
+	printf("new_object_path = %s\n", new_object_path);
+	printf("new object size = %" PRIu64 " bytes.\n", new_object_size);
+
+    if (cache_size + new_object_size <= ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity) {
+		printf("Not over capacity\n");
+		ret = false;
+	}
+    else {
+		printf("Over capacity\n");
         VERBOSE_LS(FS2DS(file_system), "Could not copy new object of size %" PRIu64 " bytes. "
                    "Cache size is %" PRIu64 " bytes. Cache capacity is %" PRIu64 " bytes. ",
                    new_object_size, cache_size,
                    ((DIR_STORE_FILE_SYSTEM*)file_system)->cache_capacity);
-
-    return ret;
+		ret = true;
+	}
+    return (ret);
 }
 
 
@@ -816,9 +823,11 @@ dir_store_flush_finish(WT_STORAGE_SOURCE *storage_source, WT_SESSION *session,
     /*
      * Copy the object to the cache if there is space available.
      */
+	printf("src_path = %s\n", src_path);
     if (!dir_store_over_capacity(file_system, session, src_path)) {
         if ((ret = dir_store_file_copy(
              dir_store, session, src_path, dest_path, WT_FS_OPEN_FILE_TYPE_DATA, false)) != 0) {
+			printf("Copied file on flush finish\n");
             ret = dir_store_err(
                 dir_store, session, errno, "ss_flush_finish copy %s to %s failed", source,
                 dest_path);
@@ -1086,9 +1095,13 @@ dir_store_open(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *nam
          * If we would be over cache capacity after copying this file, we do not
          * copy it. We read it directly from the bucket.
          */
-        if (dir_store_over_capacity(file_system, session, bucket_path))
+		printf("bucket_path = %s\n", bucket_path);
+        if (dir_store_over_capacity(file_system, session, bucket_path)) {
             file_path = bucket_path;
+			printf("Over capacity. Will use path %s\n", file_path);
+		}
         else {
+			printf("not over capacity. Copying\n");
             if ((ret = dir_store_file_copy(dir_store, session, bucket_path, cache_path,
                                            WT_FS_OPEN_FILE_TYPE_DATA, false)) != 0)
                 goto err;
@@ -1097,10 +1110,11 @@ dir_store_open(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *nam
         }
 
         dir_store->object_reads++;
-    } else
+	} else
         file_path = cache_path;
 
-    if ((ret = wt_fs->fs_open_file(wt_fs, session, file_path, file_type, flags, &wt_fh)) != 0) {
+	printf("Used path %s\n", file_path);
+	if ((ret = wt_fs->fs_open_file(wt_fs, session, file_path, file_type, flags, &wt_fh)) != 0) {
         ret = dir_store_err(dir_store, session, ret, "ss_open_object: open: %s", name);
         goto err;
     }

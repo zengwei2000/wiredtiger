@@ -101,6 +101,7 @@ __wt_tiered_bucket_config(
     if (prefix.len == 0)
         WT_ERR_MSG(session, EINVAL, "table tiered storage requires bucket_prefix to be set");
     WT_ERR(__wt_config_gets(session, cfg, "tiered_storage.cache_directory", &cachedir));
+	printf("Here\n");
     WT_ERR(__wt_config_gets(session, cfg, "tiered_storage.cache_capacity", &cachecap));
 
     hash = __wt_hash_city64(bucket.str, bucket.len);
