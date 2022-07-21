@@ -377,13 +377,14 @@ dir_store_cache_path(WT_FILE_SYSTEM *file_system, const char *name, char **pathp
  */
 static int dir_store_cache_size(const char *cache_dir, wt_off_t *size)
 {
+	char full_path[256];
 	DIR *dir;
 	struct dirent *direntp;
 	struct stat sb;
+	wt_off_t path_length;
 
 	*size = 0;
 
-	printf("Cache path %s\n", cache_dir);
 	if ((dir = opendir(cache_dir)) == NULL)
 		return -1;
 
@@ -391,13 +392,14 @@ static int dir_store_cache_size(const char *cache_dir, wt_off_t *size)
 		if (strncmp((char*)(direntp->d_name), ".", strlen(".")) == 0 ||
 			strncmp((char*)(direntp->d_name), "..", strlen("..")) == 0)
 			continue;
-		printf("Stating %s\n", (char*)(direntp->d_name));
-		if (stat((char*)(direntp->d_name), &sb) != 0)
+		path_length = strlen(cache_dir) + strlen("/") + strlen((char*)(direntp->d_name)) + 1;
+		snprintf((char*)full_path,
+				 path_length < sizeof(full_path) ? path_length : sizeof(full_path),
+				 "%s/%s", cache_dir, (char*)(direntp->d_name));
+		if (stat((char*)full_path, &sb) != 0)
 			return -1;
-		else {
+		else
 			*size += sb.st_size;
-			printf("Size so far %" PRIu64 "\n", *size);
-		}
 	}
 	return (0);
 }
@@ -441,12 +443,9 @@ dir_store_over_capacity(WT_FILE_SYSTEM *file_system,  WT_SESSION *session, char 
 	printf("new object size = %" PRIu64 " bytes.\n", new_object_size);
 	printf("capacity = %" PRIu64 " bytes.\n", ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity);
 
-    if (cache_size + new_object_size <= ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity) {
-		printf("Not over capacity\n");
+    if (cache_size + new_object_size <= ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity)
 		ret = false;
-	}
     else {
-		printf("Over capacity\n");
         VERBOSE_LS(FS2DS(file_system), "Could not copy new object of size %" PRIu64 " bytes. "
                    "Cache size is %" PRIu64 " bytes. Cache capacity is %" PRIu64 " bytes. ",
                    new_object_size, cache_size,
@@ -1137,7 +1136,7 @@ dir_store_open(WT_FILE_SYSTEM *file_system, WT_SESSION *session, const char *nam
 			printf("Over capacity. Will use path %s\n", file_path);
 		}
         else {
-			printf("not over capacity. Copying\n");
+			printf("Not over capacity. Copying\n");
             if ((ret = dir_store_file_copy(dir_store, session, bucket_path, cache_path,
                                            WT_FS_OPEN_FILE_TYPE_DATA, false)) != 0)
                 goto err;
