@@ -127,6 +127,7 @@ typedef struct dir_store_file_handle {
  */
 static int dir_store_bucket_path(WT_FILE_SYSTEM *, const char *, char **);
 static int dir_store_cache_path(WT_FILE_SYSTEM *, const char *, char **);
+static int dir_store_cache_size(const char *, wt_off_t *);
 static int dir_store_home_path(WT_FILE_SYSTEM *, const char *, char **);
 static int dir_store_configure(DIR_STORE *, WT_CONFIG_ARG *);
 static int dir_store_configure_int(DIR_STORE *, WT_CONFIG_ARG *, const char *, uint32_t *);
@@ -371,6 +372,37 @@ dir_store_cache_path(WT_FILE_SYSTEM *file_system, const char *name, char **pathp
 }
 
 /*
+ * dir_store_cache_size --
+ *     Calculate the aggregate size of files in the cache bucket directory.
+ */
+static int dir_store_cache_size(const char *cache_dir, wt_off_t *size)
+{
+	DIR *dir;
+	struct dirent *direntp;
+	struct stat sb;
+
+	*size = 0;
+
+	printf("Cache path %s\n", cache_dir);
+	if ((dir = opendir(cache_dir)) == NULL)
+		return -1;
+
+	while ((direntp = readdir(dir)) != NULL) {
+		if (strncmp((char*)(direntp->d_name), ".", strlen(".")) == 0 ||
+			strncmp((char*)(direntp->d_name), "..", strlen("..")) == 0)
+			continue;
+		printf("Stating %s\n", (char*)(direntp->d_name));
+		if (stat((char*)(direntp->d_name), &sb) != 0)
+			return -1;
+		else {
+			*size += sb.st_size;
+			printf("Size so far %" PRIu64 "\n", *size);
+		}
+	}
+	return (0);
+}
+
+/*
  * dir_store_home_path --
  *     Construct the source pathname from the file system and dir_store name.
  */
@@ -396,9 +428,9 @@ dir_store_over_capacity(WT_FILE_SYSTEM *file_system,  WT_SESSION *session, char 
     cache_dir = ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_dir;
     cache_size = 0;
 
-    /* Find the current cache size and the size */
-    if (cache_dir != NULL && (ret = stat(cache_dir, &sb)) == 0)
-        cache_size = (wt_off_t)sb.st_size;
+    /* Find the aggregate size of files in the cache bucket directory */
+    if (cache_dir == NULL || (ret = dir_store_cache_size(cache_dir, &cache_size)) != 0)
+		return true;
 
     /* Find the size of the new object */
 	if (new_object_path != NULL && (ret = stat(new_object_path, &sb)) == 0)
@@ -407,6 +439,7 @@ dir_store_over_capacity(WT_FILE_SYSTEM *file_system,  WT_SESSION *session, char 
 	printf("cache size = %" PRIu64 " bytes.\n", cache_size);
 	printf("new_object_path = %s\n", new_object_path);
 	printf("new object size = %" PRIu64 " bytes.\n", new_object_size);
+	printf("capacity = %" PRIu64 " bytes.\n", ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity);
 
     if (cache_size + new_object_size <= ((DIR_STORE_FILE_SYSTEM *)file_system)->cache_capacity) {
 		printf("Not over capacity\n");
@@ -546,6 +579,7 @@ dir_store_customize_file_system(WT_STORAGE_SOURCE *storage_source, WT_SESSION *s
         if (ret == WT_NOTFOUND) {
             ret = 0;
             cachedir.len = 0;
+			printf("cachedir not configured\n");
         } else {
             ret = dir_store_err(dir_store, session, ret, "customize_file_system: config parsing");
             goto err;
@@ -557,6 +591,7 @@ dir_store_customize_file_system(WT_STORAGE_SOURCE *storage_source, WT_SESSION *s
          if (ret == WT_NOTFOUND) {
             ret = 0;
             cachecap.val = 0;
+			printf("cache capacity value not set\n");
          } else {
              ret = dir_store_err(dir_store, session, ret, "customize_file_system: config parsing");
              goto err;
@@ -619,7 +654,8 @@ dir_store_customize_file_system(WT_STORAGE_SOURCE *storage_source, WT_SESSION *s
         goto err;
     }
     fs->cache_capacity = cachecap.val;
-
+	printf("Set fs->cache_capacity to %" PRId64 "\n", fs->cache_capacity);
+	printf("Cachedir.str is %s\n", cachedir.str);
     fs->file_system.fs_directory_list = dir_store_directory_list;
     fs->file_system.fs_directory_list_single = dir_store_directory_list_single;
     fs->file_system.fs_directory_list_free = dir_store_directory_list_free;

@@ -101,7 +101,6 @@ __wt_tiered_bucket_config(
     if (prefix.len == 0)
         WT_ERR_MSG(session, EINVAL, "table tiered storage requires bucket_prefix to be set");
     WT_ERR(__wt_config_gets(session, cfg, "tiered_storage.cache_directory", &cachedir));
-	printf("Here\n");
     WT_ERR(__wt_config_gets(session, cfg, "tiered_storage.cache_capacity", &cachecap));
 
     hash = __wt_hash_city64(bucket.str, bucket.len);
@@ -120,9 +119,10 @@ __wt_tiered_bucket_config(
     WT_ERR(__wt_strndup(session, prefix.str, prefix.len, &new->bucket_prefix));
     WT_ERR(__wt_strndup(session, cachedir.str, cachedir.len, &new->cache_directory));
     new->cache_capacity = (uint64_t)cachecap.val;
+	printf("In tiered_config.c got %" PRIu64 " for cache_capacity\n", new->cache_capacity);
 
     storage = nstorage->storage_source;
-    if (cachedir.len != 0)
+    if (cachedir.len != 0 || cachecap.val != 0)
         WT_ERR(__wt_buf_fmt(session, buf, "cache_directory=%s,cache_capacity=%lu",
                             new->cache_directory, new->cache_capacity));
     WT_ERR(storage->ss_customize_file_system(
