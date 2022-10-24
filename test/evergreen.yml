@@ -1417,6 +1417,62 @@ tasks:
           test_config_filename: configs/search_near_03_stress.txt
           test_name: search_near_03
 
+  - name: cppsuite-bf-26600-repro0
+    depends_on:
+      - name: compile
+    tags: ["cppsuite-stress-test"]
+    commands:
+      - func: "fetch artifacts"
+      - func: "cppsuite test"
+        vars:
+          test_config_filename: configs/bf_26600_default.txt
+          test_name: bf_26600
+
+  - name: cppsuite-bf-26600-repro1
+    depends_on:
+      - name: compile
+    tags: ["cppsuite-stress-test"]
+    commands:
+      - func: "fetch artifacts"
+      - func: "cppsuite test"
+        vars:
+          test_config_filename: configs/bf_26600_default.txt
+          test_name: bf_26600
+
+  - name: cppsuite-bf-26600-repro2
+    depends_on:
+      - name: compile
+    tags: ["cppsuite-stress-test"]
+    commands:
+      - func: "fetch artifacts"
+      - func: "cppsuite test"
+        vars:
+          test_config_filename: configs/bf_26600_default.txt
+          test_name: bf_26600
+
+  - name: cppsuite-bf-26600-repro3
+    depends_on:
+      - name: compile
+    tags: ["cppsuite-stress-test"]
+    commands:
+      - func: "fetch artifacts"
+      - func: "cppsuite test"
+        vars:
+          test_config_filename: configs/bf_26600_default.txt
+          test_name: bf_26600
+
+  - name: cppsuite-bf-26600-repro4
+    depends_on:
+      - name: compile
+    tags: ["cppsuite-stress-test"]
+    commands:
+      - func: "fetch artifacts"
+      - func: "cppsuite test"
+        vars:
+          test_config_filename: configs/bf_26600_default.txt
+          test_name: bf_26600
+
+
   - name: cppsuite-bounded-cursor-perf-stress
     depends_on:
       - name: compile

@@ -1,0 +1,50 @@
+# Used as a stress test for the framework.
+duration_seconds=600,
+cache_size_mb=1000,
+compression_enabled=true,
+timestamp_manager=
+(
+    enabled=true,
+    oldest_lag=300,
+    op_rate=5s,
+    stable_lag=5
+),
+workload_manager=
+(
+    checkpoint_config=
+    (
+        op_rate=10s,
+    ),
+    populate_config=
+    (
+        collection_count=1,
+        key_count_per_collection=100,
+        key_size=100,
+        thread_count=1,
+        value_size=10000
+    ),
+    insert_config=
+    (
+        #This thread removes and re-inserts a value to keep the key_count unaffected.
+        thread_count=10,
+        value_size=1000,
+        op_rate=10ms
+    ),
+    read_config=
+    (
+        op_rate=1ms,
+        ops_per_transaction=(max=100,min=100),
+        thread_count=1
+    ),
+    remove_config=
+    (
+        thread_count=0
+    ),
+    update_config=
+    (
+        op_rate=10ms,
+        ops_per_transaction=(max=10,min=0),
+        thread_count=0,
+        value_size=10
+    )
+)
