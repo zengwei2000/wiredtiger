@@ -11,10 +11,12 @@
 
 MockConnection::MockConnection(WT_CONNECTION_IMPL *connectionImpl) : _connectionImpl(connectionImpl)
 {
+    utils::throwIfNonZero(__wt_strdup(nullptr, ".", &connectionImpl->home));
 }
 
 MockConnection::~MockConnection()
 {
+    __wt_free(nullptr, _connectionImpl->home);
     __wt_free(nullptr, _connectionImpl);
 }
 

@@ -15,10 +15,17 @@
 MockSession::MockSession(WT_SESSION_IMPL *session, std::shared_ptr<MockConnection> mockConnection)
     : _sessionImpl(session), _mockConnection(std::move(mockConnection))
 {
+#if defined(_MSC_VER)
+    utils::throwIfNonZero(__wt_os_win(session));
+#else
+    utils::throwIfNonZero(__wt_os_posix(session));
+#endif
 }
 
 MockSession::~MockSession()
 {
+    std::ignore = __wt_cache_destroy(_sessionImpl);
+    __wt_free(nullptr, S2FS(_sessionImpl));
     __wt_free(nullptr, _sessionImpl);
 }
 
