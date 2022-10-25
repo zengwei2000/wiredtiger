@@ -3,6 +3,7 @@ project(unittest CXX)
 set(unittest_sources
     tests/main.cpp
     tests/test_block_manager.cpp
+    tests/test_bounds_restore.cpp
     tests/test_cache.cpp
     tests/test_crc32.cpp
     tests/test_extent_list.cpp
