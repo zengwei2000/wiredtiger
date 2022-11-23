@@ -36,6 +36,7 @@
 #define __STDC_FORMAT_MACROS
 #endif
 
+#include <csignal>
 #include <iomanip>
 #include <iostream>
 #include <fstream>
@@ -116,6 +117,9 @@ struct WorkloadRunnerConnection {
 // than one.
 static uint32_t context_count = 0;
 
+// TODO: REWORD - Global variable that stores signals passed. 
+volatile std::sig_atomic_t global_signal;
+
 static void *
 thread_runner_main(void *arg)
 {
@@ -159,6 +163,22 @@ thread_idle_table_cycle_workload(void *arg)
     }
 
     return (NULL);
+}
+
+void 
+signal_handler(int signal)
+{
+//   global_signal = signal;
+  std::cout << "Interrupt signal (" << signal << ") received.\n";
+
+   // cleanup and close up stuff here  
+   // terminate program  
+    // WorkloadRunner::close_all? WorkloadRunner::run?
+    // stopping = true;
+    // global_signal is checked in a loop; once status is set it will stop gracefully. 
+    global_signal = signal;
+//    exit(signal);
+
 }
 
 int
@@ -2448,6 +2468,11 @@ WorkloadRunner::run_all(WT_CONNECTION *conn)
     std::ostream &out = *_report_out;
     pthread_t time_thandle, idle_table_thandle;
     WT_DECL_RET;
+    
+    signal(SIGINT, signal_handler);  
+    // if (stopSignalFlag){
+    //     raise(SIGINT);
+    // }
 
     runnerConnection = createDropTableCycle = NULL;
     for (size_t i = 0; i < _trunners.size(); i++)
@@ -2547,7 +2572,8 @@ WorkloadRunner::run_all(WT_CONNECTION *conn)
         // Let the test run, reporting as needed.
         Stats curstats(false);
         now = _start;
-        while (now < end) {
+        // TODO: Add flag here to signal to exit the while loop and continue with exit code. 
+        while (now < end && global_signal != 2) {
             timespec sleep_amt;
 
             sleep_amt = end - now;
@@ -2568,7 +2594,12 @@ WorkloadRunner::run_all(WT_CONNECTION *conn)
                     next_report += options->report_interval;
             }
         }
+        // REMOVE ON PR 
+        std::cout << now << " " << end << std::endl; 
     }
+
+    // TODO: CLEANUP PRINTS 
+    std::cout << now << "stopping here" << std::endl; 
 
     // signal all threads to stop.
     if (options->run_time != 0)
