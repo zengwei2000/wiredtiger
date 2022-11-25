@@ -92,6 +92,8 @@ Checksum
 Checksums
 CityHash
 CloseHandle
+CmP
+CmPTh
 Cmvz
 Collet
 Comparator
@@ -125,6 +127,7 @@ Decrypt
 DeleteFileW
 Destructor
 Deterministically
+Dxxx
 EACCES
 EAGAIN
 EB
@@ -154,6 +157,7 @@ Encryptors
 Enqueue
 Eron
 Exponentiate
+Exxx
 FALLOC
 FALLTHROUGH
 FH
@@ -350,6 +354,8 @@ PRId
 PRIu
 PRIuXX
 PRNG
+PSD
+PSE
 PTHREAD
 PTR
 PackInputStream
@@ -378,6 +384,7 @@ RECNO
 REF's
 REFs
 RET
+RETRYABLE
 RHEL
 RLE
 RLEs
@@ -769,6 +776,7 @@ datalen
 datasets
 datasource
 datastore
+dbar
 dbc
 dbs
 dcalloc
@@ -1103,6 +1111,7 @@ llvm
 loadtext
 loc
 localTime
+localid
 localkey
 localtime
 localvalue
@@ -1276,6 +1285,7 @@ packv
 pagedump
 pageref
 pagesize
+pagestat
 param
 parens
 pareto
@@ -1453,6 +1463,7 @@ strerror
 strftime
 strget
 strlen
+strncat
 strncpy
 strndup
 strnlen
