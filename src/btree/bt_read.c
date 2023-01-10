@@ -254,22 +254,21 @@ err:
 static inline int
 __cache_sample(WT_SESSION_IMPL *session, WT_REF *ref, uint32_t flags)
 {
-    WT_ADDR_COPY addr;
-    WT_DECL_ITEM(tmp);
-    WT_PAGE *page;
-
     WT_UNUSED(flags);
 
-    page = ref->page;
 
-    if (__wt_ref_addr_copy(session, ref, &addr)) {
+    ref->last_use = __wt_atomic_fetch_add64(&S2C(session)->use_distance, 1);
+    __wt_verbose(session, WT_VERB_CACHE_SAMPLING,
+        "cache-sample ref %p, use %lu, type %s", (void *)ref,
+        ref->last_use, F_ISSET(ref, WT_REF_FLAG_INTERNAL) ? "intl" : "leaf");
+    /*if (__wt_ref_addr_copy(session, ref, &addr)) {
         WT_RET(__wt_scr_alloc(session, 0, &tmp));
         __wt_verbose(session, WT_VERB_CACHE_SAMPLING,
           "cache-sample page %p addr %s type %s read_gen %" PRIu64, (void *)page,
           __wt_addr_string(session, addr.addr, addr.size, tmp),
           WT_PAGE_IS_INTERNAL(page) ? "intl" : "leaf", page->read_gen);
         __wt_scr_free(session, &tmp);
-    }
+    }*/
 
     return (0);
 }

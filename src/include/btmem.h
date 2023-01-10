@@ -964,6 +964,8 @@ struct __wt_ref {
      */
     void *addr;
 
+    uint64_t last_use;
+
     /*
      * The child page's key.  Do NOT change this union without reviewing
      * __wt_ref_key.
@@ -1128,9 +1130,9 @@ struct __wt_ref {
  * inserted padding which would break the world.
  */
 #ifdef HAVE_REF_TRACK
-#define WT_REF_SIZE (48 + WT_REF_SAVE_STATE_MAX * sizeof(WT_REF_HIST) + 8)
+#define WT_REF_SIZE (56 + WT_REF_SAVE_STATE_MAX * sizeof(WT_REF_HIST) + 8)
 #else
-#define WT_REF_SIZE 48
+#define WT_REF_SIZE 56
 #endif
 
 /* A macro wrapper allowing us to remember the callers code location */

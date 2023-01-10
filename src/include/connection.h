@@ -568,6 +568,8 @@ struct __wt_connection_impl {
     uint32_t debug_ckpt_cnt; /* Checkpoint retention number. */
     uint32_t debug_log_cnt;  /* Log file retention count */
 
+    uint64_t use_distance;
+
 /* AUTOMATIC FLAG VALUE GENERATION START 0 */
 #define WT_CONN_DEBUG_CKPT_RETAIN 0x01u
 #define WT_CONN_DEBUG_CORRUPTION_ABORT 0x02u
