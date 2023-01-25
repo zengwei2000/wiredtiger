@@ -43,6 +43,7 @@
 // Optimise:
 // - Have some more threads stress the system?
 // - Mave multiple search_insert(101) threads?
+
 #include <math.h>
 #include "test_util.h"
 #include <math.h>
@@ -135,6 +136,20 @@ search_insert(
             key.data = WT_INSERT_KEY(ins);
             key.size = WT_INSERT_KEY_SIZE(ins);
             match = WT_MIN(skiplow, skiphigh);
+
+            // - 2 here as we've already i--'d above
+            if(last_ins != NULL) {
+                int cmp2;
+                WT_ITEM prev_key;
+
+                cmp2 = 0;
+                prev_key.data = WT_INSERT_KEY(last_ins);
+                prev_key.size = WT_INSERT_KEY_SIZE(last_ins);
+            
+                WT_IGNORE_RET(__wt_compare_skip(session, NULL, &prev_key, &key, &cmp2, &match));
+                // As we move down the stack we must be looking at smaller keys and prev_key >= key. We've checked ins != last_ins so change >= to >.
+                WT_ASSERT(session, cmp2 == 1);
+            }
             WT_RET(__wt_compare_skip(session, NULL, srch_key, &key, &cmp, &match));
         }
 
