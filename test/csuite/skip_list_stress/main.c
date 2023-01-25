@@ -35,6 +35,14 @@
  * the code.
  */
 
+// TODO
+// - Populate skip with two keys
+//      - 100, 100,000
+// - Have one thread continually call search_insert(101)
+// - Have a second thread continually inserting new keys 99,999 down to 102
+// Optimise:
+// - Have some more threads stress the system?
+// - Mave multiple search_insert(101) threads?
 #include <math.h>
 #include "test_util.h"
 #include <math.h>
