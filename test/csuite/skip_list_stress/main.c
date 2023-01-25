@@ -56,8 +56,8 @@ static uint32_t key_count = 100000;
 
 /* Test parameters. Eventually these should become command line args */
 
-#define INSERT_THREADS 8 /* Default number of threads doing inserts */
-#define VERIFY_THREADS 2 /* Default number of threads doing verify */
+#define INSERT_THREADS 1 /* Default number of threads doing inserts */
+#define CHECK_THREADS 1  /* Default number of threads doing search_insert */
 
 typedef struct {
     WT_CONNECTION *conn;
@@ -103,11 +103,15 @@ search_insert(
   WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_INSERT_HEAD *ins_head, WT_ITEM *srch_key)
 {
     WT_INSERT *ins, **insp, *last_ins;
-    WT_ITEM key;
+    WT_ITEM key, prev_key;
     size_t match, skiphigh, skiplow;
     int cmp, i;
+    bool last_move_down;
 
     cmp = 0; /* -Wuninitialized */
+    last_move_down = false;
+    prev_key.data = NULL;
+    prev_key.size = 0;
 
     /*
      * The insert list is a skip list: start at the highest skip level, then go as far as possible
@@ -117,6 +121,8 @@ search_insert(
     ins = last_ins = NULL;
     for (i = WT_SKIP_MAXDEPTH - 1, insp = &ins_head->head[i]; i >= 0;) {
         if ((ins = *insp) == NULL) {
+        // WT_ORDERED_READ(ins, *insp);
+        // if (ins == NULL) {
             cbt->next_stack[i] = NULL;
             cbt->ins_stack[i--] = insp--;
             continue;
@@ -127,33 +133,39 @@ search_insert(
          * they might be expensive.
          */
         if (ins != last_ins) {
+            size_t match2;
+            int cmp2;
+
+            cmp2 = 0;
+            match2 = 0;
+
             last_ins = ins;
             key.data = WT_INSERT_KEY(ins);
             key.size = WT_INSERT_KEY_SIZE(ins);
             match = WT_MIN(skiplow, skiphigh);
 
-            // - 2 here as we've already i--'d above
-            if(last_ins != NULL) {
-                int cmp2;
-                WT_ITEM prev_key;
-
-                cmp2 = 0;
-                prev_key.data = WT_INSERT_KEY(last_ins);
-                prev_key.size = WT_INSERT_KEY_SIZE(last_ins);
-            
-                WT_IGNORE_RET(__wt_compare_skip(session, NULL, &prev_key, &key, &cmp2, &match));
-                // As we move down the stack we must be looking at smaller keys and prev_key >= key. We've checked ins != last_ins so change >= to >.
+            WT_IGNORE_RET(__wt_compare_skip(session, NULL, &prev_key, &key, &cmp2, &match2));
+            if (last_move_down)
                 WT_ASSERT(session, cmp2 == 1);
-            }
+            else
+                WT_ASSERT(session, cmp2 == -1);
+
+
             WT_RET(__wt_compare_skip(session, NULL, srch_key, &key, &cmp, &match));
         }
 
         if (cmp > 0) { /* Keep going at this level */
+            last_move_down = false;
             insp = &ins->next[i];
+            prev_key = key;
+            WT_ASSERT(session, match >= skiplow);
             skiplow = match;
         } else if (cmp < 0) { /* Drop down a level */
+            last_move_down = true;
             cbt->next_stack[i] = ins;
             cbt->ins_stack[i--] = insp--;
+            prev_key = key;
+            WT_ASSERT(session, match >= skiphigh);
             skiphigh = match;
         } else
             for (; i >= 0; i--) {
@@ -365,34 +377,26 @@ insert(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_INSERT_HEAD *ins_head,
 }
 
 /*
- * verify_list --
- *     Walk the skip list and verify that items are in order.
+ * insert --
+ *     Test function that inserts a new entry with the given key string into our skiplist.
  */
-static void
-verify_list(WT_SESSION *session, WT_INSERT_HEAD *ins_head)
+static int
+insert_num(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_INSERT_HEAD *ins_head, uint32_t key)
 {
-    WT_INSERT *ins;
-    WT_ITEM cur;
-    WT_ITEM prev;
-    int cmp;
+    WT_DECL_RET;
+    char *new_key;
+ 
+    /*
+     * The key strings here are stored in the skip list so each key needs its own buffer.
+     */
+    new_key = dmalloc(sizeof(char *));
+    sprintf(new_key, "%u", key);
 
-    ins = WT_SKIP_FIRST(ins_head);
-    if (ins == NULL)
-        return;
+    while ((ret = insert((WT_SESSION_IMPL *)session, cbt, ins_head, new_key) == WT_RESTART))
+        ;
+    testutil_assert(ret == 0);
 
-    prev.data = WT_INSERT_KEY(ins);
-    prev.size = WT_INSERT_KEY_SIZE(ins);
-
-    while ((ins = WT_SKIP_NEXT(ins)) != NULL) {
-        cur.data = WT_INSERT_KEY(ins);
-        cur.size = WT_INSERT_KEY_SIZE(ins);
-        testutil_check(__wt_compare((WT_SESSION_IMPL *)session, NULL, &prev, &cur, &cmp));
-        if (cmp >= 0) {
-            printf("Out of order keys: %s before %s\n", (char *)prev.data, (char *)cur.data);
-            testutil_assert(false);
-        }
-        prev = cur;
-    }
+    return (0);
 }
 
 /*
@@ -404,17 +408,14 @@ thread_insert_run(void *arg)
 {
     WT_CONNECTION *conn;
     WT_CURSOR_BTREE *cbt;
-    WT_DECL_RET;
     WT_INSERT_HEAD *ins_head;
     WT_SESSION *session;
     THREAD_DATA *td;
-    char **key_list;
     uint32_t i;
 
     td = (THREAD_DATA *)arg;
     conn = td->conn;
     ins_head = td->ins_head;
-    key_list = td->keys;
 
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
 
@@ -422,15 +423,18 @@ thread_insert_run(void *arg)
     cbt = dcalloc(1, sizeof(WT_CURSOR_BTREE));
     ((WT_CURSOR *)cbt)->session = session;
 
-    /* Wait to start */
-    while (test_state == WAITING)
-        ;
+#define NUM_KEYS 10000000 // About 10 mins
+
+    // We're assuming only one INSERT THREAD in use here.
+    // It'll take responsibility for setting up the initial state
+    WT_IGNORE_RET(insert_num((WT_SESSION_IMPL *)session, cbt, ins_head, 10));
+    WT_IGNORE_RET(insert_num((WT_SESSION_IMPL *)session, cbt, ins_head, NUM_KEYS - 1));
+
+    test_state = RUNNING;
 
     /* Insert the keys. */
-    for (i = 0; i < td->nkeys; i++) {
-        while ((ret = insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[i]) == WT_RESTART))
-            ;
-        testutil_assert(ret == 0);
+    for (i = NUM_KEYS - 2; i > 11; i--) {
+        WT_IGNORE_RET(insert_num((WT_SESSION_IMPL *)session, cbt, ins_head, i));
     }
 
     free(cbt);
@@ -439,16 +443,18 @@ thread_insert_run(void *arg)
 }
 
 /*
- * thread_verify_run --
- *     A verify thread sits in a loop checking that the skiplist is in order
+ * thread_check_run --
+ *     A check thread sits in a loop checking running check on key 101
  */
 static WT_THREAD_RET
-thread_verify_run(void *arg)
+thread_check_run(void *arg)
 {
     WT_CONNECTION *conn;
     WT_INSERT_HEAD *ins_head;
     WT_SESSION *session;
     THREAD_DATA *td;
+    WT_ITEM check_key;
+    WT_CURSOR_BTREE *cbt;
 
     td = (THREAD_DATA *)arg;
     conn = td->conn;
@@ -456,16 +462,26 @@ thread_verify_run(void *arg)
 
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
 
-    /* Wait to start */
-    while (test_state == WAITING)
+    /* Set up state as if we have a btree that is accessing an insert list. */
+    cbt = dcalloc(1, sizeof(WT_CURSOR_BTREE));
+    ((WT_CURSOR *)cbt)->session = session;
+
+    while (test_state != RUNNING)
         ;
 
-    /* Keep verifying the skip list until the insert load has finished */
-    while (test_state != DONE)
-        verify_list(session, ins_head);
+    // Now continually check key 11
+    check_key.data = "11";
+    /* Include the terminal nul character in the key for easier printing. */
+    check_key.size = 4;
+
+    /* Keep checking the skip list until the insert load has finished */
+    while (test_state != DONE) {
+        WT_IGNORE_RET(search_insert((WT_SESSION_IMPL *)session, cbt, ins_head, &check_key));
+    }
 
     return (WT_THREAD_RET_VALUE);
 }
+
 
 /*
  * main --
@@ -522,7 +538,7 @@ main(int argc, char *argv[])
     } else
         rnd.v = seed;
 
-    nthreads = insert_threads + VERIFY_THREADS;
+    nthreads = insert_threads + CHECK_THREADS;
     thread_keys = key_count / insert_threads;
 
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
@@ -564,21 +580,16 @@ main(int argc, char *argv[])
         if (i < insert_threads)
             testutil_check(__wt_thread_create(NULL, &thr[i], thread_insert_run, &td[i]));
         else
-            testutil_check(__wt_thread_create(NULL, &thr[i], thread_verify_run, &td[i]));
-
-    test_state = RUNNING;
+            testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, &td[i]));
 
     /* Wait for insert threads to complete */
     for (i = 0; i < insert_threads; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
 
-    /* Tell verify threads to stop */
+    /* Tell check threads to stop */
     test_state = DONE;
     for (i = insert_threads; i < nthreads; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
-
-    /* Final verification of skiplist */
-    verify_list(session, ins_head);
 
     printf("Success.\n");
     testutil_clean_test_artifacts(home);

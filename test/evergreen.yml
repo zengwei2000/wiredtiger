@@ -1977,6 +1977,18 @@ tasks:
         vars:
           test_name: wt2323_join_visibility
 
+  - name: csuite-skip_list_stress-test
+    tags: ["pull_request"]
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+          NONSTANDALONE: -DWT_STANDALONE_BUILD=0
+          CMAKE_TOOLCHAIN_FILE: -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchains/mongodbtoolchain_v4_gcc.cmake
+      - func: "csuite test"
+        vars:
+          test_name: skip_list_stress
+
   - name: csuite-wt2535-insert-race-test
     tags: ["pull_request"]
     depends_on:
@@ -4952,6 +4964,7 @@ buildvariants:
     - name: ".stress-test-4-nonstandalone"
     - name: ".stress-test-no-barrier-nonstandalone"
     - name: format-abort-recovery-stress-test-nonstandalone
+    - name: csuite-skip_list_stress-test
 
 - name: large-scale-tests
   display_name: "Large scale tests"
