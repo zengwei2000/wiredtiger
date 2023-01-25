@@ -63,8 +63,6 @@ typedef struct {
     WT_CONNECTION *conn;
     WT_INSERT_HEAD *ins_head;
     uint32_t id;
-    char **keys;
-    uint32_t nkeys;
 } THREAD_DATA;
 
 static volatile enum { WAITING, RUNNING, DONE } test_state;
@@ -377,29 +375,6 @@ insert(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_INSERT_HEAD *ins_head,
 }
 
 /*
- * insert --
- *     Test function that inserts a new entry with the given key string into our skiplist.
- */
-static int
-insert_num(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_INSERT_HEAD *ins_head, uint32_t key)
-{
-    WT_DECL_RET;
-    char *new_key;
- 
-    /*
-     * The key strings here are stored in the skip list so each key needs its own buffer.
-     */
-    new_key = dmalloc(sizeof(char *));
-    sprintf(new_key, "%u", key);
-
-    while ((ret = insert((WT_SESSION_IMPL *)session, cbt, ins_head, new_key) == WT_RESTART))
-        ;
-    testutil_assert(ret == 0);
-
-    return (0);
-}
-
-/*
  * thread_insert_run --
  *     An insert thread. Iterates through the key list and inserts its set of keys to the skiplist.
  */
@@ -412,6 +387,7 @@ thread_insert_run(void *arg)
     WT_SESSION *session;
     THREAD_DATA *td;
     uint32_t i;
+    char **key_list;
 
     td = (THREAD_DATA *)arg;
     conn = td->conn;
@@ -423,21 +399,42 @@ thread_insert_run(void *arg)
     cbt = dcalloc(1, sizeof(WT_CURSOR_BTREE));
     ((WT_CURSOR *)cbt)->session = session;
 
-#define NUM_KEYS 10000000 // About 10 mins
+#define NUM_KEYS 100000000
 
     // We're assuming only one INSERT THREAD in use here.
     // It'll take responsibility for setting up the initial state
-    WT_IGNORE_RET(insert_num((WT_SESSION_IMPL *)session, cbt, ins_head, 10));
-    WT_IGNORE_RET(insert_num((WT_SESSION_IMPL *)session, cbt, ins_head, NUM_KEYS - 1));
+
+    /*
+     * Generate the keys. Each insert thread will operate on a separate part of the key_list array.
+     * N.B., the key strings here are stored in the skip list. So we need a separate buffer for each
+     * key.
+     */
+    key_list = dmalloc(NUM_KEYS * sizeof(char *));
+    for (i = 0; i < NUM_KEYS; i++) {
+        key_list[i] = dmalloc(12);
+        sprintf(key_list[i], "%u", i);
+    }
+
+    WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[10]));
+    WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[NUM_KEYS - 1]));
 
     test_state = RUNNING;
 
     /* Insert the keys. */
     for (i = NUM_KEYS - 2; i > 11; i--) {
-        WT_IGNORE_RET(insert_num((WT_SESSION_IMPL *)session, cbt, ins_head, i));
+        WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[i]));
     }
 
+    test_state = DONE;
+    // Wait 0.1 seconds for the check thread to finish up before we free 
+    // the skip list keys from under it.
+    usleep(100000); 
+
     free(cbt);
+    for (i = 0; i < NUM_KEYS; i++) {
+        free(key_list[i]);
+    }
+    free(key_list);
 
     return (WT_THREAD_RET_VALUE);
 }
@@ -482,6 +479,64 @@ thread_check_run(void *arg)
     return (WT_THREAD_RET_VALUE);
 }
 
+static int run(const char *working_dir) 
+{
+    char command[1024], home[1024];
+    int status;
+    WT_CONNECTION *conn;
+    WT_SESSION *session;
+    WT_INSERT_HEAD *ins_head;
+    THREAD_DATA *td;
+    wt_thread_t *thr;
+    uint32_t nthreads, i;
+    
+    nthreads = INSERT_THREADS + CHECK_THREADS;
+
+    testutil_work_dir_from_path(home, sizeof(home), working_dir);
+    testutil_check(__wt_snprintf(command, sizeof(command), "rm -rf %s; mkdir %s", home, home));
+    if ((status = system(command)) < 0)
+        testutil_die(status, "system: %s", command);
+
+    testutil_check(wiredtiger_open(home, NULL, "create", &conn));
+    testutil_check(conn->open_session(conn, NULL, NULL, &session));
+    testutil_check(__wt_spin_init((WT_SESSION_IMPL *)session, &page_lock, "fake page lock"));
+    ins_head = dcalloc(1, sizeof(WT_INSERT_HEAD));
+
+    /* Set up threads */
+    td = dmalloc(nthreads * sizeof(THREAD_DATA));
+    for (i = 0; i < nthreads; i++) {
+        td[i].conn = conn;
+        td[i].id = i;
+        td[i].ins_head = ins_head;
+    }
+
+    thr = dmalloc(nthreads * sizeof(wt_thread_t));
+
+    /* Start threads */
+    test_state = WAITING;
+    for (i = 0; i < nthreads; i++)
+        if (i < INSERT_THREADS)
+            testutil_check(__wt_thread_create(NULL, &thr[i], thread_insert_run, &td[i]));
+        else
+            testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, &td[i]));
+
+    /* Wait for insert threads to complete */
+    for (i = 0; i < INSERT_THREADS; i++)
+        testutil_check(__wt_thread_join(NULL, &thr[i]));
+
+    /* Tell check threads to stop */
+    test_state = DONE;
+    for (i = INSERT_THREADS; i < nthreads; i++)
+        testutil_check(__wt_thread_join(NULL, &thr[i]));
+
+    testutil_check(conn->close(conn, ""));
+
+    printf("Success.\n");
+    testutil_clean_test_artifacts(home);
+    testutil_clean_work_dir(home);
+
+    return (EXIT_SUCCESS);
+}
 
 /*
  * main --
@@ -490,24 +545,14 @@ thread_check_run(void *arg)
 int
 main(int argc, char *argv[])
 {
-    static char **key_list;
-    WT_CONNECTION *conn;
-    WT_INSERT_HEAD *ins_head;
     WT_RAND_STATE rnd;
-    WT_SESSION *session;
-    char command[1024], home[1024];
     const char *working_dir;
-    THREAD_DATA *td;
-    wt_thread_t *thr;
-    uint32_t i, thread_keys;
-    uint32_t insert_threads, nthreads;
-    int ch, status;
+    int ch;
 
-    insert_threads = INSERT_THREADS;
 
     working_dir = "WT_TEST.skip_list_stress";
 
-    while ((ch = __wt_getopt(progname, argc, argv, "h:k:S:t:")) != EOF)
+    while ((ch = __wt_getopt(progname, argc, argv, "h:k:S:")) != EOF)
         switch (ch) {
         case 'h':
             working_dir = __wt_optarg;
@@ -517,13 +562,6 @@ main(int argc, char *argv[])
             break;
         case 'S':
             seed = (uint64_t)atoll(__wt_optarg);
-            break;
-        case 't':
-            insert_threads = (uint32_t)atoll(__wt_optarg);
-            if (insert_threads < 2) {
-                fprintf(stderr, "Test requires at least 2 insert threads\n");
-                exit(EXIT_FAILURE);
-            }
             break;
         default:
             usage();
@@ -538,62 +576,9 @@ main(int argc, char *argv[])
     } else
         rnd.v = seed;
 
-    nthreads = insert_threads + CHECK_THREADS;
-    thread_keys = key_count / insert_threads;
-
-    testutil_work_dir_from_path(home, sizeof(home), working_dir);
-    testutil_check(__wt_snprintf(command, sizeof(command), "rm -rf %s; mkdir %s", home, home));
-    if ((status = system(command)) < 0)
-        testutil_die(status, "system: %s", command);
-
-    testutil_check(wiredtiger_open(home, NULL, "create", &conn));
-    testutil_check(conn->open_session(conn, NULL, NULL, &session));
-    testutil_check(__wt_spin_init((WT_SESSION_IMPL *)session, &page_lock, "fake page lock"));
-    ins_head = dcalloc(1, sizeof(WT_INSERT_HEAD));
-
-    /*
-     * Generate the keys. Each insert thread will operate on a separate part of the key_list array.
-     * N.B., the key strings here are stored in the skip list. So we need a separate buffer for each
-     * key.
-     */
-    key_list = dmalloc(key_count * sizeof(char *));
-    for (i = key_count - 1; i > 101; i--) {
-        key_list[i] = dmalloc(20);
-        sprintf(key_list[i], "%u", i);
+    for(int j = 0; j < 10; j++) {
+        printf("loop %d\n", j);
+        run(working_dir);
     }
-
-    /* Set up threads */
-    td = dmalloc(nthreads * sizeof(THREAD_DATA));
-    for (i = 0; i < nthreads; i++) {
-        td[i].conn = conn;
-        td[i].id = i;
-        td[i].ins_head = ins_head;
-        td[i].keys = key_list + i * thread_keys;
-        td[i].nkeys = thread_keys;
-    }
-
-    thr = dmalloc(nthreads * sizeof(wt_thread_t));
-
-    /* Start threads */
-    test_state = WAITING;
-    for (i = 0; i < nthreads; i++)
-        if (i < insert_threads)
-            testutil_check(__wt_thread_create(NULL, &thr[i], thread_insert_run, &td[i]));
-        else
-            testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, &td[i]));
-
-    /* Wait for insert threads to complete */
-    for (i = 0; i < insert_threads; i++)
-        testutil_check(__wt_thread_join(NULL, &thr[i]));
-
-    /* Tell check threads to stop */
-    test_state = DONE;
-    for (i = insert_threads; i < nthreads; i++)
-        testutil_check(__wt_thread_join(NULL, &thr[i]));
-
-    printf("Success.\n");
-    testutil_clean_test_artifacts(home);
-    testutil_clean_work_dir(home);
-
-    return (EXIT_SUCCESS);
+    return 0;
 }
