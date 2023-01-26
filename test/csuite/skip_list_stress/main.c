@@ -36,10 +36,11 @@
  */
 
 // TODO
-// Hit the gd bug
+// - Hit the gd bug
 // - confirm the copied WT functions actually match WT
 // - Update comments
 // - expose insert_search/insert to this test? Probs don't need to copy past the functions
+// - How to encourage out of order loads??
 
 #include <math.h>
 #include "test_util.h"
@@ -50,11 +51,12 @@ extern char *__wt_optarg;
 
 static uint64_t seed = 0;
 
-#define KEY_SIZE 256
+#define KEY_SIZE 1024
 
 /* Test parameters. Eventually these should become command line args */
 
-#define INSERT_THREADS 1 /* !!!! Thread sync assumes only 1 !!!! */
+#define INSERT_DECR_THREADS 1 /* !!!! Thread sync assumes only 1 !!!! */
+#define INSERT_NOISE_THREADS 2 /* Run inserts to encourage pushing keys from the decr thread out of cache */
 #define CHECK_THREADS 3  /* Can change this as needed */
 
 typedef struct {
@@ -63,8 +65,15 @@ typedef struct {
     uint32_t id;
 } THREAD_DATA;
 
-static volatile enum { SETUP_THREADS, INSERTS_FINISHED } test_state;
+
+// test states
+// - start up insert threads
+// - once inserts are ready, start up checks
+// - once checks are running, run inserts
+// - once inserts are finished, join checks
+// - once checks are joined, join inserts
 static volatile int active_check_threads;
+static volatile int active_insert_threads;
 
 static void usage(void) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 
@@ -354,13 +363,13 @@ insert(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_INSERT_HEAD *ins_head,
 }
 
 /*
- * thread_insert_run --
+ * thread_insert_decr_run --
  *     An insert thread. Continually insert keys in decreasing order. 
  *     These keys are intentionally chosen such that each newly inserted 
  *     key has a longer matching prefix with our search key in check_run. 
  */
 static WT_THREAD_RET
-thread_insert_run(void *arg)
+thread_insert_decr_run(void *arg)
 {
     WT_CONNECTION *conn;
     WT_CURSOR_BTREE *cbt;
@@ -415,6 +424,7 @@ thread_insert_run(void *arg)
     WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[LEFT_BOOKEND]));
     WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[RIGHT_BOOKEND]));
 
+    __atomic_fetch_add(&active_insert_threads, 1, __ATOMIC_SEQ_CST);
     while ( active_check_threads != CHECK_THREADS)
         ;
 
@@ -423,7 +433,79 @@ thread_insert_run(void *arg)
         WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[i]));
     }
 
-    test_state = INSERTS_FINISHED;
+    // printf("end decr\n");
+    __atomic_fetch_sub(&active_insert_threads, 1, __ATOMIC_SEQ_CST);
+
+    // Wait till all checks are joined so we don't free the skiplist under them
+    while (active_check_threads != 0)
+        ;   
+
+    free(cbt);
+    for (i = 1; i < 63; i++) {
+        free(key_list[i]);
+    }
+    free(key_list);
+
+    return (WT_THREAD_RET_VALUE);
+}
+
+/*
+ * thread_insert_noise_run --
+ *     An insert thread. Insert random keys (always larger than RIGHT_BOOKEND) 
+ *     to push things out of cache and hopefully encourage more OOO reads 
+ */
+static WT_THREAD_RET
+thread_insert_noise_run(void *arg)
+{
+    WT_CONNECTION *conn;
+    WT_CURSOR_BTREE *cbt;
+    WT_INSERT_HEAD *ins_head;
+    WT_SESSION *session;
+    THREAD_DATA *td;
+    uint32_t i;
+    char **key_list;
+    WT_RAND_STATE rnd;
+
+    td = (THREAD_DATA *)arg;
+    conn = td->conn;
+    ins_head = td->ins_head;
+
+    testutil_check(conn->open_session(conn, NULL, NULL, &session));
+
+    /* Set up state as if we have a btree that is accessing an insert list. */
+    cbt = dcalloc(1, sizeof(WT_CURSOR_BTREE));
+    ((WT_CURSOR *)cbt)->session = session;
+
+    __wt_random_init_seed(NULL, &rnd);
+
+    /*
+     * Generate the keys.
+     * N.B., the key strings here are stored in the skip list. So we need a separate buffer for each
+     * key.
+     */
+    // 3 times as many keys as the decr thread to make sure it runs the whole time decr is running
+    key_list = dmalloc((3 * KEY_SIZE) * sizeof(char *));
+    for (i = 1; i < (3 * KEY_SIZE); i++) {
+        key_list[i] = dmalloc(KEY_SIZE);
+        // Start with a 2 so it's always to the right of the decr keys
+        sprintf(key_list[i], "2%u", __wt_random(&rnd) % 100000);
+    }
+
+    __atomic_fetch_add(&active_insert_threads, 1, __ATOMIC_SEQ_CST);
+    while ( active_check_threads != CHECK_THREADS)
+        ;
+
+    /* Insert the keys. */
+    for (i = 1; i < (3 * KEY_SIZE); i++) {
+        WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[i]));
+
+        // If the insert decr thread is done then early exit. No need to keep generating noise at this point.
+        if(active_insert_threads <= INSERT_NOISE_THREADS)
+            break;
+    }
+
+    // printf("end noise\n");
+    __atomic_fetch_sub(&active_insert_threads, 1, __ATOMIC_SEQ_CST);
 
     // Wait till all checks are joined so we don't free the skiplist under them
     while (active_check_threads != 0)
@@ -470,10 +552,12 @@ thread_check_run(void *arg)
     /* Include the terminal nul character in the key for easier printing. */
     check_key.size = KEY_SIZE;
 
+    while(active_insert_threads != INSERT_DECR_THREADS + INSERT_NOISE_THREADS)
+        ;
     __atomic_fetch_add(&active_check_threads, 1, __ATOMIC_SEQ_CST);
 
     /* Keep checking the skip list until the insert load has finished */
-    while (test_state != INSERTS_FINISHED)
+    while (active_insert_threads != 0)
         WT_IGNORE_RET(search_insert((WT_SESSION_IMPL *)session, cbt, ins_head, &check_key));
 
     __atomic_fetch_sub(&active_check_threads, 1, __ATOMIC_SEQ_CST);
@@ -492,7 +576,7 @@ static int run(const char *working_dir)
     wt_thread_t *thr;
     uint32_t nthreads, i;
     
-    nthreads = INSERT_THREADS + CHECK_THREADS;
+    nthreads = CHECK_THREADS + INSERT_DECR_THREADS + INSERT_NOISE_THREADS;
 
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
     testutil_check(__wt_snprintf(command, sizeof(command), "rm -rf %s; mkdir %s", home, home));
@@ -515,20 +599,26 @@ static int run(const char *working_dir)
     thr = dmalloc(nthreads * sizeof(wt_thread_t));
 
     /* Start threads */
-    test_state = SETUP_THREADS;
     active_check_threads = 0;
+    active_insert_threads = 0;
     for (i = 0; i < nthreads; i++)
         if (i < CHECK_THREADS)
             testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, &td[i]));
+        else if (i < CHECK_THREADS + INSERT_DECR_THREADS)
+            testutil_check(__wt_thread_create(NULL, &thr[i], thread_insert_decr_run, &td[i]));
         else
-            testutil_check(__wt_thread_create(NULL, &thr[i], thread_insert_run, &td[i]));
+            testutil_check(__wt_thread_create(NULL, &thr[i], thread_insert_noise_run, &td[i]));
 
     /* Wait check threads to stop */
     for (i = 0; i < CHECK_THREADS; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
 
-    /* Wait for insert threads to complete */
-    for (i = CHECK_THREADS; i < nthreads; i++)
+    /* Wait for insert decr thread to complete */
+    for (i = CHECK_THREADS; i < CHECK_THREADS + INSERT_DECR_THREADS; i++)
+        testutil_check(__wt_thread_join(NULL, &thr[i]));
+
+    /* Wait for insert noise thread to complete */
+    for (i = CHECK_THREADS + INSERT_DECR_THREADS; i < nthreads; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
 
     
