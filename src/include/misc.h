@@ -91,7 +91,7 @@
 
 /* 20 level skip lists, Always have a link to the next element. */
 /* FIXME WT-10461 - This needs to change back or be #ifdeffed for the test */
-#define WT_SKIP_MAXDEPTH 20
+#define WT_SKIP_MAXDEPTH 16
 #define WT_SKIP_PROBABILITY UINT32_MAX
 
 /*
