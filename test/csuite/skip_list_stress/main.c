@@ -119,6 +119,9 @@ search_insert(
     WT_ITEM key;
     size_t match, skiphigh, skiplow;
     int cmp, i;
+    int prev_path;
+
+    prev_path = 0;
 
     cmp = 0; /* -Wuninitialized */
 
@@ -152,13 +155,28 @@ search_insert(
         }
 
         if (cmp > 0) { /* Keep going at this level */
+            prev_path = -1;
             insp = &ins->next[i];
-            WT_ASSERT(session, match >= skiplow);
+            cbt->next_stack[i] = ins;
+            if(match < skiplow) {
+                printf("skiphigh invariant broken!\n");
+                printf("cur_key = %s\n", (char*)WT_INSERT_KEY(ins));
+                printf("prev_key = %s\n", (char*)WT_INSERT_KEY(WT_INSERT_KEY(cbt->next_stack[i+1])));
+                printf("prev_path = %d\n", prev_path);
+                exit(1);
+            }
             skiplow = match;
         } else if (cmp < 0) { /* Drop down a level */
+            prev_path = 1;
             cbt->next_stack[i] = ins;
             cbt->ins_stack[i--] = insp--;
-            WT_ASSERT(session, match >= skiphigh);
+            if(match < skiphigh) {
+                printf("skiphigh invariant broken!\n");
+                printf("cur_key = %s\n", (char*)WT_INSERT_KEY(ins));
+                printf("prev_key = %s\n", (char*)WT_INSERT_KEY(WT_INSERT_KEY(cbt->next_stack[i+1])));
+                printf("prev_path = %d\n", prev_path);
+                exit(1);
+            }
             skiphigh = match;
         } else
             for (; i >= 0; i--) {
