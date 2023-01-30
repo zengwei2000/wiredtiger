@@ -448,12 +448,7 @@ functions:
       script: |
         set -o errexit
         set -o verbose
-        # ${test_env_vars|} $(pwd)/test/csuite/${test_name}/test_${test_name} ${test_args|} 2>&1
-
-        # FIXME WT-10461 - This needs to be changed back or a special case added for the test
-        for i in $(seq 8); do
-          ${test_env_vars|} $(pwd)/test/csuite/${test_name}/test_${test_name} -h "SUBDIR_$i"
-        done
+        ${test_env_vars|} $(pwd)/test/csuite/${test_name}/test_${test_name} ${test_args|} 2>&1
 
   "unit test":
     command: shell.exec
