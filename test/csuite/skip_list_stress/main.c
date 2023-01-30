@@ -42,7 +42,6 @@
 // - expose insert_search/insert to this test? Probs don't need to copy past the functions
 // - How to encourage out of order loads??
 
-#include <math.h>
 #include "test_util.h"
 #include <math.h>
 
@@ -55,6 +54,15 @@ static uint64_t seed = 0;
 
 /* Test parameters. Eventually these should become command line args */
 
+// Currently 3 types of threads:
+// 1. Check threads continually call search_insert, but never insert
+//    If the OOO read happens they'll fail the assert `match >= skiphigh`
+// 2. The Insert thread inserts keys in a decreasing order. It chooses keys 
+//    that will trigger the assert in the check threads
+// 3. The invalidate thread was an attempt to send read-invalidate signals 
+//    to the check threads so they need to re-read a cached value and 
+//    hopefully trigger a read OOO. No luck so far.
+
 #define CHECK_THREADS 3  /* Can change this as needed */
 #define INSERT_THREAD 1 /* !!!! We only want 1 insert thread. Don't change this !!!! */
 #define INVALIDATE_THREAD 1 /* !!!! We only want 1 invalidate thread. Don't change this !!!! */
@@ -66,12 +74,15 @@ typedef struct {
 } THREAD_DATA;
 
 
-// test states
-// - start up insert threads
-// - once inserts are ready, start up checks
-// - once checks are running, run inserts
-// - once inserts are finished, join checks
-// - once checks are joined, join inserts
+// Test lifecycle - Thread interactions:
+// 1. Begin test
+// 2. Start up insert thread. It'll populate the initial skiplist and then wait for check threads
+// 3. Once insert thread is ready, check threads start running in a loop and signal insert thread
+//        In this case invalidate threads is considered one of the check threads
+// 4. Once *all* check threads are running, insert thread starts inserting key
+// 5. Once insert thread is finished it signals the checks threads and waits
+// 6. The check threads stop
+// 7. Once all check threads are stopped, insert thread frees memory and stops
 static volatile int active_check_threads;
 static volatile int active_insert_threads;
 
@@ -285,6 +296,9 @@ insert_serial(WT_SESSION_IMPL *session, WT_INSERT_HEAD *ins_head, WT_INSERT ***i
 static int
 row_insert(WT_CURSOR_BTREE *cbt, const WT_ITEM *key, WT_INSERT_HEAD *ins_head)
 {
+    // TODO - Significant deviation from the WT implementation. 
+    //        Need to confirm this still hits the correct code paths.
+    //        Other functions also deviate but not as much as this one.
     WT_DECL_RET;
     WT_INSERT *ins;
     WT_SESSION_IMPL *session;
@@ -403,7 +417,8 @@ thread_insert_run(void *arg)
     // 001
     // 0001
     // 00001
-    // up to KEY_SIZE chars long (incl. nul byte)
+    // up to KEY_SIZE chars long (incl. nul byte).
+    // Note that each of these keys is smaller than the previous one due to string comparison logic.
     // TODO - hacked in bookends
     // TODO - index 0 is nul!!
     key_list = dmalloc(((KEY_SIZE - 1) + 2) * sizeof(char *));
@@ -429,7 +444,7 @@ thread_insert_run(void *arg)
         ;
 
     /* Insert the keys. */
-    for (i = 1; i < 63; i++) {
+    for (i = 1; i < KEY_SIZE - 1; i++) {
         WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[i]));
     }
 
@@ -443,7 +458,7 @@ thread_insert_run(void *arg)
     // TODO - We're leaking memory somewhere... For now handle it by running 
     // the binary multiple times for a shorter time in evergreen.yml
     free(cbt);
-    for (i = 1; i < 63; i++) {
+    for (i = 1; i <= KEY_SIZE; i++) {
         free(key_list[i]);
     }
     free(key_list);
