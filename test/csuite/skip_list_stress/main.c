@@ -50,7 +50,8 @@ extern char *__wt_optarg;
 
 static uint64_t seed = 0;
 
-#define KEY_SIZE 1024
+#define NUM_KEYS (1 << 20)
+#define KEY_BIT_SIZE 10
 
 /* Test parameters. Eventually these should become command line args */
 
@@ -119,9 +120,6 @@ search_insert(
     WT_ITEM key;
     size_t match, skiphigh, skiplow;
     int cmp, i;
-    int prev_path;
-
-    prev_path = 0;
 
     cmp = 0; /* -Wuninitialized */
 
@@ -155,34 +153,42 @@ search_insert(
         }
 
         if (cmp > 0) { /* Keep going at this level */
-            prev_path = -1;
             insp = &ins->next[i];
             cbt->next_stack[i] = ins;
-            if(match < skiplow) {
-                printf("skiphigh invariant broken!\n");
-                printf("cur_key = %s\n", (char*)WT_INSERT_KEY(ins));
-                printf("prev_key = %s\n", (char*)WT_INSERT_KEY(WT_INSERT_KEY(cbt->next_stack[i+1])));
-                printf("prev_path = %d\n", prev_path);
-                exit(1);
-            }
             skiplow = match;
         } else if (cmp < 0) { /* Drop down a level */
-            prev_path = 1;
             cbt->next_stack[i] = ins;
             cbt->ins_stack[i--] = insp--;
-            if(match < skiphigh) {
-                printf("skiphigh invariant broken!\n");
-                printf("cur_key = %s\n", (char*)WT_INSERT_KEY(ins));
-                printf("prev_key = %s\n", (char*)WT_INSERT_KEY(WT_INSERT_KEY(cbt->next_stack[i+1])));
-                printf("prev_path = %d\n", prev_path);
-                exit(1);
-            }
             skiphigh = match;
         } else
             for (; i >= 0; i--) {
                 cbt->next_stack[i] = ins->next[i];
                 cbt->ins_stack[i] = &ins->next[i];
             }
+    }
+
+    // At the end of the search check that all the pointers inserted into 
+    // cbt->next_stack are in decreasing order.
+    {
+        WT_ITEM upper_key, lower_key;
+
+        for(i = WT_SKIP_MAXDEPTH - 2; i >= 0; i--) {
+            // Skip if either pointer is to the end of the skiplist, or if both pointers the same
+            if(cbt->next_stack[i] == NULL || cbt->next_stack[i+1] == NULL 
+                || (cbt->next_stack[i] == cbt->next_stack[i+1]))
+                continue;
+            lower_key.data = WT_INSERT_KEY(cbt->next_stack[i]);
+            lower_key.size = WT_INSERT_KEY_SIZE(cbt->next_stack[i]);
+
+            upper_key.data = WT_INSERT_KEY(cbt->next_stack[i+1]);
+            upper_key.size = WT_INSERT_KEY_SIZE(cbt->next_stack[i+1]);
+
+            // force match to zero for a full comparison of keys
+            match = 0;
+            WT_RET(__wt_compare_skip(session, NULL, &upper_key, &lower_key, &cmp, &match));
+
+            WT_ASSERT((WT_SESSION_IMPL*)session, cmp >= 0);
+        }
     }
 
     /*
@@ -406,6 +412,7 @@ thread_insert_run(void *arg)
     THREAD_DATA *td;
     uint32_t i;
     char **key_list;
+    char *min_key, *max_key;
 
     td = (THREAD_DATA *)arg;
     conn = td->conn;
@@ -425,57 +432,45 @@ thread_insert_run(void *arg)
      * N.B., the key strings here are stored in the skip list. So we need a separate buffer for each
      * key.
      */
-    // This generates:
-    // 1
-    // 01
-    // 001
-    // 0001
-    // 00001
-    // up to KEY_SIZE chars long (incl. nul byte).
-    // Note that each of these keys is smaller than the previous one due to string comparison logic.
-    // TODO - hacked in bookends
-    // TODO - index 0 is nul!!
-    key_list = dmalloc(((KEY_SIZE - 1) + 2) * sizeof(char *));
-    for (i = 1; i < (KEY_SIZE - 1); i++) {
-        key_list[i] = dmalloc(KEY_SIZE);
-        sprintf(key_list[i], "%0*d", (int)i, 1);
+    key_list = dmalloc(NUM_KEYS * sizeof(char*));
+    for (i = 0; i < NUM_KEYS; i++) {
+        key_list[i] = dmalloc(KEY_BIT_SIZE);
+        sprintf(key_list[i], "%0*u", KEY_BIT_SIZE - 1, i);
     }
 
-    #define LEFT_BOOKEND KEY_SIZE - 1
-    key_list[LEFT_BOOKEND] = dmalloc(KEY_SIZE);
-    // KEY_SIZE - 2 zeroes. Our search key is KEY_SIZE -1 zeroes so this is smaller.
-    sprintf(key_list[LEFT_BOOKEND], "%0*d", KEY_SIZE - 2, 0);
+    min_key = dmalloc(2);
+    sprintf(min_key, "0");
 
-    #define RIGHT_BOOKEND KEY_SIZE
-    key_list[RIGHT_BOOKEND] = dmalloc(KEY_SIZE);
-    sprintf(key_list[RIGHT_BOOKEND], "11111111");
+    max_key = dmalloc(KEY_BIT_SIZE);
+    for(int j = 0; j < KEY_BIT_SIZE - 1; j++)
+        max_key[j] = '9';
+    max_key[KEY_BIT_SIZE - 1] = '\0';
 
-    WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[LEFT_BOOKEND]));
-    WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[RIGHT_BOOKEND]));
+    WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, min_key));
+    WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, max_key));
 
     __atomic_fetch_add(&active_insert_threads, 1, __ATOMIC_SEQ_CST);
     while ( active_check_threads != (CHECK_THREADS))
         ;
 
-    /* Insert the keys. */
-    for (i = 1; i < KEY_SIZE - 1; i++) {
+    /* Insert the keys in decreasing order. */
+    for (i = NUM_KEYS - 1; i > 0; i--) {
         WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[i]));
     }
 
-    // printf("end decr\n");
     __atomic_fetch_sub(&active_insert_threads, 1, __ATOMIC_SEQ_CST);
 
     // Wait till all checks are joined so we don't free the skiplist under them
     while (active_check_threads != 0)
         ;   
 
-    // TODO - We're leaking memory somewhere... For now handle it by running 
-    // the binary multiple times for a shorter time in evergreen.yml
     free(cbt);
-    for (i = 1; i <= KEY_SIZE; i++) {
+    for (i = 0; i < NUM_KEYS; i++) {
         free(key_list[i]);
     }
     free(key_list);
+    free(min_key);
+    free(max_key);
 
     return (WT_THREAD_RET_VALUE);
 }
@@ -507,10 +502,10 @@ thread_check_run(void *arg)
     ((WT_CURSOR *)cbt)->session = session;
     
     // Set up our search key. It'll always be just after LEFT_BOOKEND in the skip list
-    check_key.data = dmalloc(KEY_SIZE);
-    sprintf((char*)check_key.data, "%0*d", KEY_SIZE - 1, 0);
+    check_key.data = dmalloc(3);
+    sprintf((char*)check_key.data, "00");
     /* Include the terminal nul character in the key for easier printing. */
-    check_key.size = KEY_SIZE;
+    check_key.size = 3;
 
     while(active_insert_threads != INSERT_THREAD)
         ;
@@ -577,7 +572,21 @@ static int run(const char *working_dir)
     
     testutil_check(conn->close(conn, ""));
 
-    // printf("Success.\n");
+    // Inserts get allocated as part of __wt_row_insert_alloc.
+    // Walk the skiplist and clean them up at the end of the test.
+    {
+        WT_INSERT *ins;
+        WT_INSERT *prev_ins;
+        prev_ins = NULL;
+        ins = ins_head->head[0];
+        while(ins->next[0] != NULL) {
+            if(prev_ins != NULL)
+                free(prev_ins);
+            prev_ins = ins;
+            ins = ins->next[0];
+        }
+    }
+
     testutil_clean_test_artifacts(home);
     testutil_clean_work_dir(home);
 
@@ -618,8 +627,9 @@ main(int argc, char *argv[])
     } else
         rnd.v = seed;
 
-    // 2.5 mins of testing. Run multiple times in evergreen.yml
-    for(int j = 0; j < 1000; j++) {
+    // 2 seconds per loop w/ 1,000,000 keys inserted
+    // 60 loops for 2 mins of runtime
+    for(int j = 0; j < 60; j++) {
         printf("loop %d\n", j);
         run(working_dir);
         // Cause evergreen buffers output and I'm impatient
