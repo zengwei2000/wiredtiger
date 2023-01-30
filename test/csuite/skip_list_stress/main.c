@@ -59,13 +59,9 @@ static uint64_t seed = 0;
 //    If the OOO read happens they'll fail the assert `match >= skiphigh`
 // 2. The Insert thread inserts keys in a decreasing order. It chooses keys 
 //    that will trigger the assert in the check threads
-// 3. The invalidate thread was an attempt to send read-invalidate signals 
-//    to the check threads so they need to re-read a cached value and 
-//    hopefully trigger a read OOO. No luck so far.
 
 #define CHECK_THREADS 3  /* Can change this as needed */
 #define INSERT_THREAD 1 /* !!!! We only want 1 insert thread. Don't change this !!!! */
-#define INVALIDATE_THREAD 1 /* !!!! We only want 1 invalidate thread. Don't change this !!!! */
 
 typedef struct {
     WT_CONNECTION *conn;
@@ -440,7 +436,7 @@ thread_insert_run(void *arg)
     WT_IGNORE_RET(insert((WT_SESSION_IMPL *)session, cbt, ins_head, key_list[RIGHT_BOOKEND]));
 
     __atomic_fetch_add(&active_insert_threads, 1, __ATOMIC_SEQ_CST);
-    while ( active_check_threads != (CHECK_THREADS + INVALIDATE_THREAD))
+    while ( active_check_threads != (CHECK_THREADS))
         ;
 
     /* Insert the keys. */
@@ -463,120 +459,6 @@ thread_insert_run(void *arg)
     }
     free(key_list);
 
-    return (WT_THREAD_RET_VALUE);
-}
-
-/*
- * thread_invalidate_run --
- *     TODO - Continually update the level 8 pointer to force a read-invalidate for all other CPUs.
- *     If we're lucky this triggers out of order reads in the check threads.
- */
-static WT_THREAD_RET
-thread_invalidate_run(void *arg)
-{
-    WT_CONNECTION *conn;
-    WT_CURSOR_BTREE *cbt;
-    WT_INSERT_HEAD *ins_head;
-    WT_SESSION *session;
-    THREAD_DATA *td;
-
-    WT_ITEM srch_key;
-    WT_DECL_RET;
-
-    // Stolen from insert_search
-    WT_INSERT *ins, **insp, *last_ins;
-    WT_ITEM key;
-    size_t match, skiphigh, skiplow;
-    int cmp, i;
-
-    // Thread setup
-    td = (THREAD_DATA *)arg;
-    conn = td->conn;
-    ins_head = td->ins_head;
-
-    testutil_check(conn->open_session(conn, NULL, NULL, &session));
-
-    /* Set up state as if we have a btree that is accessing an insert list. */
-    cbt = dcalloc(1, sizeof(WT_CURSOR_BTREE));
-    ((WT_CURSOR *)cbt)->session = session;
-
-    // Wait for active threads
-    while(active_insert_threads != INSERT_THREAD)
-        ;
-
-    //////////////////////////////////////////////////
-    // Find correct ptr - stolen from search_insert //
-    //////////////////////////////////////////////////
-
-    srch_key.data = dmalloc(KEY_SIZE);
-    sprintf((char*)srch_key.data, "11111111");
-    srch_key.size = 9;
-
-    cmp = -2; /* -Wuninitialized */
-
-    /*
-     * The insert list is a skip list: start at the highest skip level, then go as far as possible
-     * at each level before stepping down to the next.
-     */
-    match = skiphigh = skiplow = 0;
-    ins = last_ins = NULL;
-
-    // hardcode to 8 
-    // Why 8? All these pointers are in an array and each ptr is 8 bytes, so we can fit 8 
-    // to a 64 byte cache line. The CAS should invalidate the cache line of levels 8-15 
-    // while leaving levels 0-7 untouched.
-    // !!!!!!!!!!!
-    // THIS ASSUMES SKIPLIST ALWAYS HAS 8+ LEVELS !!!!!
-    // !!!!!!!!!!!
-    i = 8;
-    insp = &ins_head->head[i];
-    while (cmp != 0) {
-        ins = *insp;
-
-        // If ins is NULL we've seen the end of the skiplist. 
-        // That shouldn't happen with current setup (16 levels, always populated).
-        WT_ASSERT((WT_SESSION_IMPL*)session, ins != NULL);
-
-        if (ins != last_ins) {
-            last_ins = ins;
-            key.data = WT_INSERT_KEY(ins);
-            key.size = WT_INSERT_KEY_SIZE(ins);
-
-            // Ignore match here. We just want to find the correct key to invalidate.
-            WT_UNUSED(match);
-
-            ret = __wt_compare_skip((WT_SESSION_IMPL*)session, NULL, &srch_key, &key, &cmp, &match);
-            if(ret != 0) {
-                printf("COMPARE FAIL IN INVALIDATE_RUN\n");
-                exit(1);
-            }
-        }
-
-        if (cmp > 0) { /* Keep going at this level */
-            insp = &ins->next[i];
-            WT_ASSERT((WT_SESSION_IMPL*)session, match >= skiplow);
-            skiplow = match;
-        } else if (cmp < 0) { /* Drop down a level */
-            // We shouldn't need to drop a level with this test setup.
-            // 16 levels, always filled as per above and we're searching for a key we know is present.
-            WT_ASSERT((WT_SESSION_IMPL*)session, false);
-        } else {
-            __atomic_fetch_add(&active_check_threads, 1, __ATOMIC_SEQ_CST);
-            while(active_insert_threads != INSERT_THREAD)
-                ;
-
-            // Continually update the next pointer to ins, but always with its existing value.
-            // This doesn't change anything, but forces a read-invalidate for all other threads.
-            while(active_insert_threads != 0) {
-                __wt_atomic_cas_ptr(&last_ins->next[8], last_ins->next[8], last_ins->next[8]);
-            }
-
-            return (WT_THREAD_RET_VALUE);
-        }
-    } 
-
-    // Should be unreachable
-    WT_ASSERT((WT_SESSION_IMPL*)session, false);
     return (WT_THREAD_RET_VALUE);
 }
 
@@ -636,7 +518,7 @@ static int run(const char *working_dir)
     wt_thread_t *thr;
     uint32_t nthreads, i;
     
-    nthreads = CHECK_THREADS + INVALIDATE_THREAD + INSERT_THREAD;
+    nthreads = CHECK_THREADS + INSERT_THREAD;
 
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
     testutil_check(__wt_snprintf(command, sizeof(command), "rm -rf %s; mkdir %s", home, home));
@@ -664,8 +546,6 @@ static int run(const char *working_dir)
     for (i = 0; i < nthreads; i++)
         if (i < CHECK_THREADS)
             testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, &td[i]));
-        else if(i < CHECK_THREADS + INVALIDATE_THREAD)
-            testutil_check(__wt_thread_create(NULL, &thr[i], thread_invalidate_run, &td[i]));    
         else
             testutil_check(__wt_thread_create(NULL, &thr[i], thread_insert_run, &td[i]));
 
@@ -673,12 +553,8 @@ static int run(const char *working_dir)
     for (i = 0; i < CHECK_THREADS; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
 
-    /* Wait for invalidate thread to complete */
-    for (i = CHECK_THREADS; i < CHECK_THREADS + INVALIDATE_THREAD; i++)
-        testutil_check(__wt_thread_join(NULL, &thr[i]));
-
     /* Wait for insert thread to complete */
-    for (i = CHECK_THREADS + INVALIDATE_THREAD; i < CHECK_THREADS + INSERT_THREAD; i++)
+    for (i = CHECK_THREADS; i < nthreads; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
     
     testutil_check(conn->close(conn, ""));
