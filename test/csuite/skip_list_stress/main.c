@@ -203,73 +203,6 @@ search_insert(
 }
 
 /*
- * insert_simple_func --
- *     Add a WT_INSERT entry to the middle of a skiplist. Copy of __insert_simple_func().
- */
-static inline int
-insert_simple_func(
-  WT_SESSION_IMPL *session, WT_INSERT ***ins_stack, WT_INSERT *new_ins, u_int skipdepth)
-{
-    u_int i;
-
-    WT_UNUSED(session);
-
-    /*
-     * Update the skiplist elements referencing the new WT_INSERT item. If we fail connecting one of
-     * the upper levels in the skiplist, return success: the levels we updated are correct and
-     * sufficient. Even though we don't get the benefit of the memory we allocated, we can't roll
-     * back.
-     *
-     * All structure setup must be flushed before the structure is entered into the list. We need a
-     * write barrier here, our callers depend on it. Don't pass complex arguments to the macro, some
-     * implementations read the old value multiple times.
-     */
-    for (i = 0; i < skipdepth; i++) {
-        WT_INSERT *old_ins = *ins_stack[i];
-        if (old_ins != new_ins->next[i] || !__wt_atomic_cas_ptr(ins_stack[i], old_ins, new_ins))
-            return (i == 0 ? WT_RESTART : 0);
-    }
-
-    return (0);
-}
-
-/*
- * insert_serial_func --
- *     Add a WT_INSERT entry to a skiplist. Copy of __insert_serial_func()
- */
-static inline int
-insert_serial_func(WT_SESSION_IMPL *session, WT_INSERT_HEAD *ins_head, WT_INSERT ***ins_stack,
-  WT_INSERT *new_ins, u_int skipdepth)
-{
-    u_int i;
-
-    /* The cursor should be positioned. */
-    WT_ASSERT(session, ins_stack[0] != NULL);
-
-    /*
-     * Update the skiplist elements referencing the new WT_INSERT item.
-     *
-     * Confirm we are still in the expected position, and no item has been added where our insert
-     * belongs. If we fail connecting one of the upper levels in the skiplist, return success: the
-     * levels we updated are correct and sufficient. Even though we don't get the benefit of the
-     * memory we allocated, we can't roll back.
-     *
-     * All structure setup must be flushed before the structure is entered into the list. We need a
-     * write barrier here, our callers depend on it. Don't pass complex arguments to the macro, some
-     * implementations read the old value multiple times.
-     */
-    for (i = 0; i < skipdepth; i++) {
-        WT_INSERT *old_ins = *ins_stack[i];
-        if (old_ins != new_ins->next[i] || !__wt_atomic_cas_ptr(ins_stack[i], old_ins, new_ins))
-            return (i == 0 ? WT_RESTART : 0);
-        if (ins_head->tail[i] == NULL || ins_stack[i] == &ins_head->tail[i]->next[i])
-            ins_head->tail[i] = new_ins;
-    }
-
-    return (0);
-}
-
-/*
  * insert_serial --
  *     Top level function for inserting a WT_INSERT into a skiplist. Based on __wt_insert_serial()
  */
@@ -292,10 +225,10 @@ insert_serial(WT_SESSION_IMPL *session, WT_INSERT_HEAD *ins_head, WT_INSERT ***i
             simple = false;
 
     if (simple)
-        ret = insert_simple_func(session, ins_stack, new_ins, skipdepth);
+        ret = __insert_simple_func(session, ins_stack, new_ins, skipdepth);
     else {
         __wt_spin_lock(session, &page_lock);
-        ret = insert_serial_func(session, ins_head, ins_stack, new_ins, skipdepth);
+        ret = __insert_serial_func(session, ins_head, ins_stack, new_ins, skipdepth);
         __wt_spin_unlock(session, &page_lock);
     }
 
