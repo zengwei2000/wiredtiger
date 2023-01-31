@@ -627,9 +627,8 @@ main(int argc, char *argv[])
     } else
         rnd.v = seed;
 
-    // 2 seconds per loop w/ 1,000,000 keys inserted
-    // 60 loops for 2 mins of runtime
-    for(int j = 0; j < 60; j++) {
+    // Should run for 1 hour on ARM machines
+    for(int j = 0; j < 600; j++) {
         printf("loop %d\n", j);
         run(working_dir);
         // Cause evergreen buffers output and I'm impatient
