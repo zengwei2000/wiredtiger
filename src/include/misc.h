@@ -96,7 +96,7 @@
  * the number of levels in the skiplist which increases the chance of the bug firing.
  * Do we need this test long term? If not we can hack this to 50% for now and not deliver the change. 
  */
-#define WT_SKIP_PROBABILITY (UINT32_MAX >> 1)
+#define WT_SKIP_PROBABILITY (UINT32_MAX - 1)
 
 /*
  * Encryption needs to know its original length before either the block or logging subsystems pad.

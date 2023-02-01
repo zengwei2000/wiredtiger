@@ -14,6 +14,15 @@ define_c_test(
 )
 
 define_c_test(
+    TARGET test_new_skip_list_stress
+    SOURCES new_skip_list_stress/main.c
+    DIR_NAME new_skip_list_stress
+    EXEC_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/new_skip_list_stress/smoke.sh
+    ARGUMENTS $<TARGET_FILE:test_new_skip_list_stress>
+    DEPENDS "WT_POSIX"
+)
+
+define_c_test(
     TARGET test_incr_backup
     SOURCES incr_backup/main.c
     DIR_NAME incr_backup

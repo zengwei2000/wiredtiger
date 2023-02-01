@@ -52,20 +52,12 @@ static uint64_t seed = 0;
 
 static void usage(void) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
 
+const char *uri = "table:foo";
+
 static volatile bool inserts_running;
+static volatile int active_check_threads;
 
-/*
- * We don't care about the values we store in our mock insert list. So all entries will point to the
- * dummy update. Likewise, the insert code uses the WT page lock when it needs to exclusive access.
- * We're don't have that, so we just set up a single global spinlock that all threads use since
- * they're all operating on the same skiplist.
- */
-static WT_UPDATE dummy_update;
-
-typedef struct {
-    WT_CONNECTION *conn;
-    WT_INSERT_HEAD *ins_head;
-} THREAD_DATA;
+#define NUM_CHECK_THREADS 5
 
 /*
  * usage --
@@ -187,21 +179,19 @@ static WT_THREAD_RET
 thread_check_run(void *arg)
 {
     WT_CONNECTION *conn;
-    WT_INSERT_HEAD *ins_head;
     WT_SESSION *session;
-    THREAD_DATA *td;
     WT_ITEM check_key;
     WT_CURSOR_BTREE *cbt;
+    WT_CURSOR *cursor;
 
-    td = (THREAD_DATA *)arg;
-    conn = td->conn;
-    ins_head = td->ins_head;
+    conn = (WT_CONNECTION*)arg;
 
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
+    testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
 
-    /* Set up state as if we have a btree that is accessing an insert list. */
-    cbt = dcalloc(1, sizeof(WT_CURSOR_BTREE));
-    ((WT_CURSOR *)cbt)->session = session;
+    cbt = (WT_CURSOR_BTREE*)cursor;
+    cursor->set_key(cursor, "0");
+    testutil_check(cursor->search(cursor));
     
     // Set up our search key. It'll always be just after LEFT_BOOKEND in the skip list
     check_key.data = dmalloc(3);
@@ -209,9 +199,11 @@ thread_check_run(void *arg)
     /* Include the terminal nul character in the key for easier printing. */
     check_key.size = 3;
 
+    __atomic_fetch_add(&active_check_threads, 1, __ATOMIC_SEQ_CST);
+
     /* Keep checking the skip list until the insert load has finished */
     while (inserts_running == true)
-        WT_IGNORE_RET(search_insert((WT_SESSION_IMPL *)session, cbt, ins_head, &check_key));
+        WT_IGNORE_RET(search_insert((WT_SESSION_IMPL *)session, cbt, cbt->ins_head, &check_key));
 
     session->close(session, "");
 
@@ -225,80 +217,6 @@ static void insert_key(WT_CURSOR *cursor, const char *key) {
     testutil_check(cursor->insert(cursor));
 }
 
-
-/*
- * row_insert --
- *     Our version of the __wt_row_modify() function, with everything stripped out except for the
- *     relevant insert path.
- */
-static int
-row_insert(WT_CURSOR_BTREE *cbt, const WT_ITEM *key, WT_INSERT_HEAD *ins_head, WT_PAGE *page)
-{
-    // TODO - Significant deviation from the WT implementation. 
-    //        Need to confirm this still hits the correct code paths.
-    //        Other functions also deviate but not as much as this one.
-    WT_DECL_RET;
-    WT_INSERT *ins;
-    WT_SESSION_IMPL *session;
-    size_t ins_size;
-    u_int i, skipdepth;
-
-    ins = NULL;
-    session = CUR2S(cbt);
-
-    /*
-     * Allocate the insert array as necessary.
-     *
-     * We allocate an additional insert array slot for insert keys sorting less than any key on the
-     * page. The test to select that slot is baroque: if the search returned the first page slot, we
-     * didn't end up processing an insert list, and the comparison value indicates the search key
-     * was smaller than the returned slot, then we're using the smallest-key insert slot. That's
-     * hard, so we set a flag.
-     */
-
-    /* Choose a skiplist depth for this insert. */
-    skipdepth = __wt_skip_choose_depth(session);
-
-    /*
-     * Allocate a WT_INSERT/WT_UPDATE pair and transaction ID, and update the cursor to reference it
-     * (the WT_INSERT_HEAD might be allocated, the WT_INSERT was allocated).
-     */
-    WT_ERR(__wt_row_insert_alloc(session, key, skipdepth, &ins, &ins_size));
-    cbt->ins_head = ins_head;
-    cbt->ins = ins;
-
-    ins->upd = &dummy_update;
-    ins_size += WT_UPDATE_SIZE;
-
-    /*
-     * If there was no insert list during the search, the cursor's information cannot be correct,
-     * search couldn't have initialized it.
-     *
-     * Otherwise, point the new WT_INSERT item's skiplist to the next elements in the insert list
-     * (which we will check are still valid inside the serialization function).
-     *
-     * The serial mutex acts as our memory barrier to flush these writes before inserting them into
-     * the list.
-     */
-    if (cbt->ins_stack[0] == NULL)
-        for (i = 0; i < skipdepth; i++) {
-            cbt->ins_stack[i] = &ins_head->head[i];
-            ins->next[i] = cbt->next_stack[i] = NULL;
-        }
-    else
-        for (i = 0; i < skipdepth; i++)
-            ins->next[i] = cbt->next_stack[i];
-
-    /* Insert the WT_INSERT structure. */
-    // WT_UNUSED(page);
-    // WT_ERR(insert_serial(session, cbt->ins_head, cbt->ins_stack, &ins, skipdepth));
-    // Can assume exclusive is true as there's only the 1 insert thread
-    WT_ERR(__wt_insert_serial(session, page, cbt->ins_head, cbt->ins_stack, &ins, ins_size, skipdepth, true));
-err:
-    return (ret);
-}
-
-
 static int run(const char *working_dir) 
 {
     char command[1024], home[1024];
@@ -306,16 +224,14 @@ static int run(const char *working_dir)
     WT_CONNECTION *conn;
     WT_SESSION *session;
     WT_CURSOR *cursor;
-    const char *uri;
 
     char *new_key;
 
-    THREAD_DATA td;
     wt_thread_t *thr;
 
     inserts_running = true;
+    active_check_threads = 0;
 
-    uri = "table:foo";
     new_key = dmalloc(10);
 
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
@@ -331,34 +247,28 @@ static int run(const char *working_dir)
     insert_key(cursor, "0");
     insert_key(cursor, "9999999999");
 
-    cursor->set_key(cursor, "0");
-    testutil_check(cursor->search(cursor));
-
-    // Save ins_head. Spawn off search_insert threads
-    // printf("ins_head = %p\n", ((WT_CURSOR_BTREE*)cursor)->ins_head);
-
-    td.conn = conn;
-    td.ins_head = ((WT_CURSOR_BTREE*)cursor)->ins_head;
-
     // TODO - static array
-    thr = dmalloc(1 * sizeof(wt_thread_t));
+    thr = dmalloc(NUM_CHECK_THREADS * sizeof(wt_thread_t));
 
-    for(int i = 0; i < 1; i++)
-        testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, &td));
+    for(int i = 0; i < NUM_CHECK_THREADS; i++)
+        testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, conn));
+
+    testutil_check(session->begin_transaction(session, NULL));
+
+    while (active_check_threads != NUM_CHECK_THREADS)
+        ;
 
     // Run inserts
-    for(uint32_t i = 1000000; i > 0; i--) {
-        printf("%u\n", i);
+    for(uint32_t i = 15000; i > 0; i--) {
         sprintf(new_key, "%0*u", 9, i);
         insert_key(cursor, new_key);
-        if(cursor == (WT_CURSOR*)0x12345)
-            row_insert((WT_CURSOR_BTREE*)cursor, NULL, ((WT_CURSOR_BTREE*)cursor)->ins_head, ((WT_CURSOR_BTREE*)cursor)->ref->page);
     }
 
-    // printf("end inserts\n");
+    testutil_check(session->commit_transaction(session, NULL));
+
     inserts_running = false;
 
-    for (int i = 0; i < 1; i++)
+    for (int i = 0; i < NUM_CHECK_THREADS; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
 
     testutil_check(conn->close(conn, ""));
@@ -404,7 +314,7 @@ main(int argc, char *argv[])
         rnd.v = seed;
 
     // Should run for 1 hour on ARM machines
-    for(int j = 0; j < 10; j++) {
+    for(int j = 0; j < 30000; j++) {
         printf("loop %d\n", j);
         run(working_dir);
         // Cause evergreen buffers output and I'm impatient
