@@ -26,38 +26,53 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+ /* 
 /*
- * This program tests skip list ordering under concurrent workloads. It copies some of the skip list
- * code from the btree, but links against the WiredTiger library for all of the support functions.
+ /* 
+  * This test reproduces WT-10461 in which platforms with a weak memory model like ARM
+  * can insert items into a skiplist with an incorrect next_stack. Upper levels of 
+  * the next_stack should always point to larger keys than lower levels of the stack 
+  * but we can violate this constraint if we have the following (simplified) scenario:
+  * 
  *
- * This is a quick and dirty test for WT-10461. If we ever decide to make this a standard part of
- * the csuite, we'll need to refactor things so it uses the same code as WT, rather than a copy of
- * the code.
- */
+  * 
+  * 1. Four keys are added to the same insert list: A, B, C, and D. The keys are ordered 
+  *    such that A < B < C < D
+  * 2. Keys A and D are already present in the insert list. Keys B and C are inserted 
+  *    at the same time with C inserted slightly earlier.
+  * 3. As C is being inserted A's next_stack pointers - previously pointing at D - will 
+  *    be updated to point to C. These pointers are updated from the bottom of A's
+  *    next_stack upwards.
+  * 4. As B is preparing to be inserted it builds its next_stack by choosing pointers from 
+  *    the top of A's next_stack and moving downwards.
+  * 5. Provided that pointers in step 3 are written bottom up and pointers in step 4 are 
+  *    read top down the resulting pointers in B's next_stack will be consistent, but if 
+  *    pointers are read out of order in step 4 then B can set an old pointer to key D in 
+  *    a lower level and then set a newer pointer to C in an upper level violating our 
+  *    constraint that upper levels in next_stacks must point to larger keys than lower 
+  *    levels.
+  * 
+  * To reproduce the above we set up a scenario with a skip list containing keys "0" (A) 
+  * and "9999999999" (D). New keys are continually inserted in a decreasing order to represent 
+  * the insertion of C, while in a parallel thread we emulate the insertion of B by continually 
+  * calling __wt_search_insert for key "00". Note that we're not actually inserting B here, 
+  * just repeating the critical section of B's insertion where the out of order read can occur. 
+  * We run this section in parallel across NUM_SEARCH_INSERT_THREADS to increase the chance of 
+  * the error firing.
+  */
 
-// TODO
-// - Hit the gd bug
-// - confirm the copied WT functions actually match WT
-// - Update comments
-// - expose insert_search/insert to this test? Probs don't need to copy past the functions
-// - How to encourage out of order loads??
-
+#include <time.h>
 #include "test_util.h"
-#include <math.h>
 
 extern int __wt_optind;
 extern char *__wt_optarg;
 
-static uint64_t seed = 0;
-
-static void usage(void) WT_GCC_FUNC_DECL_ATTRIBUTE((noreturn));
-
 const char *uri = "table:foo";
 
-static volatile bool inserts_running;
-static volatile int active_check_threads;
+static volatile bool inserts_finished;
+static volatile uint32_t active_search_insert_threads;
 
-#define NUM_CHECK_THREADS 5
+#define NUM_SEARCH_INSERT_THREADS 5
 
 /*
  * usage --
@@ -66,117 +81,35 @@ static volatile int active_check_threads;
 static void
 usage(void)
 {
-    fprintf(
-      stderr, "usage: %s [-adr] [-h dir] [-S seed] [-t insert threads]\n", progname);
-    fprintf(stderr, "Only one of the -adr options may be used\n");
+    fprintf(stderr, "usage: %s [-h dir]\n", progname);
     exit(EXIT_FAILURE);
 }
 
-
 /*
- * search_insert --
- *     Find the location for an insert into the skip list. Based o __wt_search_insert()
+ * insert_key --
+ *     Helper function to insert a key. 
+ *     For this test we only care about keys so just insert a dummy value.
  */
-static int
-search_insert(
-  WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_INSERT_HEAD *ins_head, WT_ITEM *srch_key)
-{
-    WT_INSERT *ins, **insp, *last_ins;
-    WT_ITEM key;
-    size_t match, skiphigh, skiplow;
-    int cmp, i;
-
-    cmp = 0; /* -Wuninitialized */
-
-    /*
-     * The insert list is a skip list: start at the highest skip level, then go as far as possible
-     * at each level before stepping down to the next.
-     */
-    match = skiphigh = skiplow = 0;
-    ins = last_ins = NULL;
-    for (i = WT_SKIP_MAXDEPTH - 1, insp = &ins_head->head[i]; i >= 0;) {
-        if ((ins = *insp) == NULL) {
-        // This should fix the bug once it fires:
-        // WT_ORDERED_READ(ins, *insp);
-        // if (ins == NULL) {
-            cbt->next_stack[i] = NULL;
-            cbt->ins_stack[i--] = insp--;
-            continue;
-        }
-
-        /*
-         * Comparisons may be repeated as we drop down skiplist levels; don't repeat comparisons,
-         * they might be expensive.
-         */
-        if (ins != last_ins) {
-            key.data = WT_INSERT_KEY(ins);
-            key.size = WT_INSERT_KEY_SIZE(ins);
-            match = WT_MIN(skiplow, skiphigh);
-
-            WT_RET(__wt_compare_skip(session, NULL, srch_key, &key, &cmp, &match));
-            last_ins = ins;
-        }
-
-        if (cmp > 0) { /* Keep going at this level */
-            insp = &ins->next[i];
-            cbt->next_stack[i] = ins;
-            WT_ASSERT(session, match >= skiplow);
-            skiplow = match;
-        } else if (cmp < 0) { /* Drop down a level */
-            cbt->next_stack[i] = ins;
-            cbt->ins_stack[i--] = insp--;
-            WT_ASSERT(session, match >= skiphigh);
-            skiphigh = match;
-        } else
-            for (; i >= 0; i--) {
-                cbt->next_stack[i] = ins->next[i];
-                cbt->ins_stack[i] = &ins->next[i];
-            }
-    }
-
-    // At the end of the search check that all the pointers inserted into 
-    // cbt->next_stack are in decreasing order.
-    {
-        WT_ITEM upper_key, lower_key;
-
-        for(i = WT_SKIP_MAXDEPTH - 2; i >= 0; i--) {
-            // Skip if either pointer is to the end of the skiplist, or if both pointers the same
-            if(cbt->next_stack[i] == NULL || cbt->next_stack[i+1] == NULL 
-                || (cbt->next_stack[i] == cbt->next_stack[i+1]))
-                continue;
-            lower_key.data = WT_INSERT_KEY(cbt->next_stack[i]);
-            lower_key.size = WT_INSERT_KEY_SIZE(cbt->next_stack[i]);
-
-            upper_key.data = WT_INSERT_KEY(cbt->next_stack[i+1]);
-            upper_key.size = WT_INSERT_KEY_SIZE(cbt->next_stack[i+1]);
-
-            // force match to zero for a full comparison of keys
-            match = 0;
-            WT_RET(__wt_compare_skip(session, NULL, &upper_key, &lower_key, &cmp, &match));
-
-            WT_ASSERT((WT_SESSION_IMPL*)session, cmp >= 0);
-        }
-    }
-
-    /*
-     * For every insert element we review, we're getting closer to a better choice; update the
-     * compare field to its new value. If we went past the last item in the list, return the last
-     * one: that is used to decide whether we are positioned in a skiplist.
-     */
-    cbt->compare = -cmp;
-    cbt->ins = (ins != NULL) ? ins : last_ins;
-    cbt->ins_head = ins_head;
-    return (0);
+static void insert_key(WT_CURSOR *cursor, const char *key) {
+    cursor->set_key(cursor, key);
+    cursor->set_value(cursor, "");
+    testutil_check(cursor->insert(cursor));
 }
 
 /*
- * thread_check_run --
- *     A check thread sits in a loop running search_insert for KEY_SIZE - 1 zeroes
- *     Note that this never inserts the key, just searches for it. If there's 
- *     an out of order read we'll catch it in the match >= skiphigh assert in search_insert.
+ * thread_search_insert_run --
+ *     Find the insert list under test and then continually build a list of 
+ *     skiplist pointers as if we were going to insert a new key. This function 
+ *     does not insert a new key though, as we want to stress the construction of 
+ *     the next_stack built by the function. If out-of-order reads occur as a result 
+ *     of this function call it is caught by an assertion in _wt_search_insert.
+ *
+ *     !!!! Note !!!!
+ *     This function is not a proper usage of the WT API. It's whitebox and accesses 
+ *     internal WiredTiger functions in order to stress the __wt_search_insert function.
  */
 static WT_THREAD_RET
-thread_check_run(void *arg)
+thread_search_insert_run(void *arg)
 {
     WT_CONNECTION *conn;
     WT_SESSION *session;
@@ -185,36 +118,39 @@ thread_check_run(void *arg)
     WT_CURSOR *cursor;
 
     conn = (WT_CONNECTION*)arg;
-
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
-    testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
 
+    /* 
+     * Position the cursor on our insert list under stress. We know "0" is 
+     * present as we inserted during test setup. 
+     */
+    testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
     cbt = (WT_CURSOR_BTREE*)cursor;
     cursor->set_key(cursor, "0");
     testutil_check(cursor->search(cursor));
     
-    // Set up our search key. It'll always be just after LEFT_BOOKEND in the skip list
+     /* 
+      * We need the session to have a dhandle set so that __wt_search_insert 
+      * can access `session->dhandle->handle->collator`. This would already 
+      * be set if we were calling __wt_search_insert through the proper channels.
+      */
+    ((WT_SESSION_IMPL*)session)->dhandle = cbt->dhandle;
+
+    /* 
+     * Set up our key to __wt_search_insert on. It'll always sit just after the first 
+     * item in the skiplist. 
+     */
     check_key.data = dmalloc(3);
     sprintf((char*)check_key.data, "00");
-    /* Include the terminal nul character in the key for easier printing. */
     check_key.size = 3;
 
-    __atomic_fetch_add(&active_check_threads, 1, __ATOMIC_SEQ_CST);
-
-    /* Keep checking the skip list until the insert load has finished */
-    while (inserts_running == true)
-        WT_IGNORE_RET(search_insert((WT_SESSION_IMPL *)session, cbt, cbt->ins_head, &check_key));
+    __wt_atomic_addv32(&active_search_insert_threads, 1);
+    while (inserts_finished == false)
+        WT_IGNORE_RET(__wt_search_insert((WT_SESSION_IMPL *)session, cbt, cbt->ins_head, &check_key));
+    __wt_atomic_subv32(&active_search_insert_threads, 1);
 
     session->close(session, "");
-
     return (WT_THREAD_RET_VALUE);
-}
-
-
-static void insert_key(WT_CURSOR *cursor, const char *key) {
-    cursor->set_key(cursor, key);
-    cursor->set_value(cursor, "");
-    testutil_check(cursor->insert(cursor));
 }
 
 static int run(const char *working_dir) 
@@ -224,15 +160,14 @@ static int run(const char *working_dir)
     WT_CONNECTION *conn;
     WT_SESSION *session;
     WT_CURSOR *cursor;
+    wt_thread_t thr[NUM_SEARCH_INSERT_THREADS];
+    // struct timeval start, end;
 
-    char *new_key;
+    char *key;
+    key = dmalloc(10);
 
-    wt_thread_t *thr;
-
-    inserts_running = true;
-    active_check_threads = 0;
-
-    new_key = dmalloc(10);
+    inserts_finished = false;
+    active_search_insert_threads = 0;
 
     testutil_work_dir_from_path(home, sizeof(home), working_dir);
     testutil_check(__wt_snprintf(command, sizeof(command), "rm -rf %s; mkdir %s", home, home));
@@ -241,41 +176,41 @@ static int run(const char *working_dir)
 
     testutil_check(wiredtiger_open(home, NULL, "create", &conn));
     testutil_check(conn->open_session(conn, NULL, NULL, &session));
-    testutil_check(session->create(session, uri, "key_format=S,value_format=S,memory_page_max=1TB")); // !!!!!!!!!
+    /* 
+     * We want this whole test to run on a single insert list. 
+     * Set a very large memory_page_max to prevent the page from splitting.
+     */
+    testutil_check(session->create(session, uri, "key_format=S,value_format=S,memory_page_max=1TB"));
     testutil_check(session->open_cursor(session, uri, NULL, NULL, &cursor));
 
+    /* Insert keys A and D from the description at the top of the file. */
     insert_key(cursor, "0");
     insert_key(cursor, "9999999999");
 
-    // TODO - static array
-    thr = dmalloc(NUM_CHECK_THREADS * sizeof(wt_thread_t));
+    /* Wait for search_insert threads to be up and running. */
+    for(int i = 0; i < NUM_SEARCH_INSERT_THREADS; i++)
+        testutil_check(__wt_thread_create(NULL, &thr[i], thread_search_insert_run, conn));
 
-    for(int i = 0; i < NUM_CHECK_THREADS; i++)
-        testutil_check(__wt_thread_create(NULL, &thr[i], thread_check_run, conn));
-
-    testutil_check(session->begin_transaction(session, NULL));
-
-    while (active_check_threads != NUM_CHECK_THREADS)
+    while (active_search_insert_threads != NUM_SEARCH_INSERT_THREADS)
         ;
 
-    // Run inserts
-    for(uint32_t i = 15000; i > 0; i--) {
-        sprintf(new_key, "%0*u", 9, i);
-        insert_key(cursor, new_key);
+    testutil_check(session->begin_transaction(session, NULL));
+    for(uint32_t i = 10000; i > 0; i--) {
+        sprintf(key, "%0*u", 9, i);
+        // gettimeofday(&start, NULL);
+        insert_key(cursor, key);
+        // gettimeofday(&end, NULL);
+        // printf("DBG key = %u, runtime (ms) = %ld\n", i, (end.tv_sec - start.tv_sec) * 1000000 + end.tv_usec - start.tv_usec );
     }
-
     testutil_check(session->commit_transaction(session, NULL));
 
-    inserts_running = false;
-
-    for (int i = 0; i < NUM_CHECK_THREADS; i++)
+    inserts_finished = true;
+    for (int i = 0; i < NUM_SEARCH_INSERT_THREADS; i++)
         testutil_check(__wt_thread_join(NULL, &thr[i]));
 
     testutil_check(conn->close(conn, ""));
-
     testutil_clean_test_artifacts(home);
     testutil_clean_work_dir(home);
-
     return (EXIT_SUCCESS);
 }
 
@@ -286,39 +221,35 @@ static int run(const char *working_dir)
 int
 main(int argc, char *argv[])
 {
-    WT_RAND_STATE rnd;
     const char *working_dir;
     int ch;
+    struct timespec now, start;
 
     working_dir = "WT_TEST.skip_list_stress";
 
-    while ((ch = __wt_getopt(progname, argc, argv, "h:S:")) != EOF)
+    while ((ch = __wt_getopt(progname, argc, argv, "h:")) != EOF)
         switch (ch) {
         case 'h':
             working_dir = __wt_optarg;
             break;
-        case 'S':
-            seed = (uint64_t)atoll(__wt_optarg);
-            break;
         default:
             usage();
         }
+
     argc -= __wt_optind;
     if (argc != 0)
         usage();
 
-    if (seed == 0) {
-        __wt_random_init_seed(NULL, &rnd);
-        seed = rnd.v;
-    } else
-        rnd.v = seed;
-
-    // Should run for 1 hour on ARM machines
-    for(int j = 0; j < 30000; j++) {
-        printf("loop %d\n", j);
+    __wt_epoch(NULL, &start);
+    for(int j = 0; ; j++) {
+        printf("Run %d\n", j);
         run(working_dir);
-        // Cause evergreen buffers output and I'm impatient
+        /* Evergreen buffers logs. Flush so we can see that the test is progressing. */
         fflush(stdout);
+
+        __wt_epoch(NULL, &now);
+        if (WT_TIMEDIFF_SEC(now, start) >= (15 * WT_MINUTE))
+            break;
     }
     return 0;
 }
