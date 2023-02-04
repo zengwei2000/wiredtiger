@@ -103,6 +103,7 @@ __wt_cursor_checkpoint_id(WT_CURSOR *cursor)
 
     cbt = (WT_CURSOR_BTREE *)cursor;
 
+    printf("Returning checkpoint_id %lu\n", cbt->checkpoint_id);
     return (cbt->checkpoint_id);
 }
 
@@ -883,6 +884,7 @@ __curfile_setup_checkpoint(WT_CURSOR_BTREE *cbt, const char *cfg[], WT_DATA_HAND
     cbt->checkpoint_write_gen = ckpt_snapshot->snapshot_write_gen;
 
     /* Remember the checkpoint ID so it can be returned to the application. */
+    printf("The checkpoint_id is set to %lu\n", ckpt_snapshot->ckpt_id);
     cbt->checkpoint_id = ckpt_snapshot->ckpt_id;
 
     /*

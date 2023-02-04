@@ -39,6 +39,8 @@
 #include "src/common/thread_manager.h"
 #include "src/storage/connection_manager.h"
 
+#include <iostream>
+
 extern "C" {
 #include "wiredtiger.h"
 #include "test_util.h"
@@ -47,40 +49,22 @@ extern "C" {
 using namespace test_harness;
 
 /* Declarations to avoid the error raised by -Werror=missing-prototypes. */
-void insert_op(WT_CURSOR *cursor, int key_size, int value_size);
-void read_op(WT_CURSOR *cursor, int key_size);
+void checkpoint_op(WT_SESSION *session, const std::string &cfg);
 
 bool do_inserts = false;
 bool do_reads = false;
 
 void
-insert_op(WT_CURSOR *cursor, int key_size, int value_size)
+checkpoint_op(WT_SESSION *session, const std::string &cfg)
 {
-    logger::log_msg(LOG_INFO, "called insert_op");
+    logger::log_msg(LOG_INFO, "called checkpoint_op");
 
-    /* Insert random data. */
-    std::string key, value;
-    while (do_inserts) {
-        key = random_generator::instance().generate_random_string(key_size);
-        value = random_generator::instance().generate_random_string(value_size);
-        cursor->set_key(cursor, key.c_str());
-        cursor->set_value(cursor, value.c_str());
-        testutil_check(cursor->insert(cursor));
-    }
-}
-
-void
-read_op(WT_CURSOR *cursor, int key_size)
-{
-    logger::log_msg(LOG_INFO, "called read_op");
-
-    /* Read random data. */
-    std::string key;
-    while (do_reads) {
-        key = random_generator::instance().generate_random_string(key_size);
-        cursor->set_key(cursor, key.c_str());
-        WT_IGNORE_RET(cursor->search(cursor));
-    }
+    // Sleep for some time and perform a checkpoint.
+    logger::log_msg(LOG_INFO, "Sleeping 5s...");
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+    logger::log_msg(LOG_INFO, "Checkpointing...");
+    testutil_check(session->checkpoint(session, cfg.c_str()));
+    logger::log_msg(LOG_INFO, "Checkpointing done!");
 }
 
 int
@@ -94,10 +78,9 @@ main(int argc, char *argv[])
 
     /* Printing some messages. */
     logger::log_msg(LOG_INFO, "Starting " + progname);
-    logger::log_msg(LOG_ERROR, "This could be an error.");
 
     /* Create a connection, set the cache size and specify the home directory. */
-    const std::string conn_config = CONNECTION_CREATE + ",cache_size=500MB";
+    const std::string conn_config = CONNECTION_CREATE + ",cache_size=500MB,checkpoint_sync=false";
     const std::string home_dir = std::string(DEFAULT_DIR) + '_' + progname;
 
     /* Create connection. */
@@ -105,66 +88,149 @@ main(int argc, char *argv[])
     WT_CONNECTION *conn = connection_manager::instance().get_connection();
 
     /* Open different sessions. */
-    WT_SESSION *insert_session, *read_session;
-    testutil_check(conn->open_session(conn, nullptr, nullptr, &insert_session));
-    testutil_check(conn->open_session(conn, nullptr, nullptr, &read_session));
+    WT_SESSION *session, *checkpoint_session;
+    testutil_check(conn->open_session(conn, nullptr, nullptr, &session));
+    testutil_check(conn->open_session(conn, nullptr, nullptr, &checkpoint_session));
 
-    /* Create a collection. */
-    const std::string collection_name = "table:my_collection";
-    testutil_check(insert_session->create(
-      insert_session, collection_name.c_str(), DEFAULT_FRAMEWORK_SCHEMA.c_str()));
-
-    /* Open different cursors. */
-    WT_CURSOR *insert_cursor, *read_cursor;
-    const std::string cursor_config = "";
-    testutil_check(insert_session->open_cursor(
-      insert_session, collection_name.c_str(), nullptr, cursor_config.c_str(), &insert_cursor));
-    testutil_check(read_session->open_cursor(
-      read_session, collection_name.c_str(), nullptr, cursor_config.c_str(), &read_cursor));
-
-    /* Store cursors. */
-    std::vector<WT_CURSOR *> cursors;
-    cursors.push_back(insert_cursor);
-    cursors.push_back(read_cursor);
-
-    /* Insert some data. */
-    std::string key = "a";
-    const std::string value = "b";
-    insert_cursor->set_key(insert_cursor, key.c_str());
-    insert_cursor->set_value(insert_cursor, value.c_str());
-    testutil_check(insert_cursor->insert(insert_cursor));
-
-    /* Read some data. */
-    key = "b";
-    read_cursor->set_key(read_cursor, key.c_str());
-    testutil_assert(read_cursor->search(read_cursor) == WT_NOTFOUND);
-
-    key = "a";
-    read_cursor->set_key(read_cursor, key.c_str());
-    testutil_check(read_cursor->search(read_cursor));
-
-    /* Create a thread manager and spawn some threads that will work. */
+    // Create a thread to do a checkpoint operation.
     thread_manager t;
-    int key_size = 1, value_size = 2;
+    // t.add_thread(checkpoint_op, checkpoint_session, "");
 
-    do_inserts = true;
-    t.add_thread(insert_op, insert_cursor, key_size, value_size);
+    /* Create an empty collection. */
+    const std::string collection_name = "table:my_collection";
+    testutil_check(
+      session->create(session, collection_name.c_str(), DEFAULT_FRAMEWORK_SCHEMA.c_str()));
 
-    do_reads = true;
-    t.add_thread(read_op, read_cursor, key_size);
+    /* V2 */
+    WT_CURSOR *checkpoint_cursor;
 
-    /* Sleep for the test duration. */
-    int test_duration_s = 5;
-    std::this_thread::sleep_for(std::chrono::seconds(test_duration_s));
+    // Open a checkpoint cursor, this should not work as no checkpoint exists so far.
+    // testutil_assert(session->open_cursor(session, collection_name.c_str(), nullptr,
+    // "checkpoint=WiredTigerCheckpoint", &checkpoint_cursor) == ENOENT);
 
-    /* Stop the threads. */
-    do_reads = false;
-    do_inserts = false;
+    // Call checkpoint.
+    testutil_check(session->checkpoint(session, ""));
+    // Call named checkpoint - it should have the same info as the system wide checkpoint.
+    testutil_check(session->checkpoint(session, "name=toto"));
+
+    // Get the list of checkpoints here.
+    int ret;
+    WT_CKPT *ckpt, *ckptbase;
+    const std::string filename("file:my_collection.wt");
+    std::cout << "Opening checkpoints for " << filename << "..." << std::endl;
+    if ((ret = __wt_metadata_get_ckptlist((WT_SESSION *)session, filename.c_str(), &ckptbase)) ==
+      0) {
+        WT_CKPT_FOREACH (ckptbase, ckpt)
+            printf("Checkpoint is %s\n", ckpt->name);
+    } else {
+        printf("Could not open the metadata %d!\n", ret);
+    }
+
+    WT_CKPT ckpt2;
+    testutil_check(__wt_meta_checkpoint((WT_SESSION_IMPL *)session, filename.c_str(), nullptr, &ckpt2));
+    std::cout << "__wt_meta_checkpoint: " << ckpt2.name << std::endl;
+
+    // Open a checkpoint cursor now.
+    // testutil_check(session->open_cursor(session, collection_name.c_str(), nullptr,
+    // "checkpoint=WiredTigerCheckpoint", &checkpoint_cursor)); Print the checkpoint id. std::cout
+    // << checkpoint_cursor->checkpoint_id(checkpoint_cursor) << std::endl;
+    // testutil_check(checkpoint_cursor->close(checkpoint_cursor));
+
+    // Create unamed and named checkpoints.
+    // testutil_check(session->checkpoint(session, ""));
+    // testutil_check(session->checkpoint(session, "name=toto"));
+
+    // Open a bulk cursor and close it.
+    std::cout << "Opening bulk cursor..." << std::endl;
+    WT_CURSOR *bulk_cursor;
+    testutil_check(
+      session->open_cursor(session, collection_name.c_str(), nullptr, "bulk", &bulk_cursor));
+    // Insert N records.
+    bulk_cursor->set_key(bulk_cursor, "A");
+    bulk_cursor->set_value(bulk_cursor, "B");
+    bulk_cursor->insert(bulk_cursor);
+    testutil_check(bulk_cursor->close(bulk_cursor));
+    std::cout << "Bulk cursor closed!" << std::endl;
+
+    std::cout << "Opening checkpoints for " << filename << "..." << std::endl;
+    if ((ret = __wt_metadata_get_ckptlist((WT_SESSION *)session, filename.c_str(), &ckptbase)) ==
+      0) {
+        WT_CKPT_FOREACH (ckptbase, ckpt)
+            printf("Checkpoint is %s\n", ckpt->name);
+    } else {
+        printf("Could not open the metadata %d!\n", ret);
+    }
+
+      WT_CKPT ckpt3;
+    testutil_check(__wt_meta_checkpoint((WT_SESSION_IMPL *)session, filename.c_str(), nullptr, &ckpt3));
+    std::cout << "Retrieved checkpoint " << ckpt3.name << std::endl;
+
+    // Opening a checkpoint cursor should hang.
+    uint64_t walltime;
+    walltime = 0;
+    testutil_check(__wt_meta_read_checkpoint_snapshot(
+      (WT_SESSION_IMPL *)session, NULL, NULL, NULL, NULL, NULL, NULL, &walltime));
+    std::cout << "Retrieved walltime is " << walltime << std::endl;
+
+    // testutil_check(session->checkpoint(session, ""));
+    // const std::string
+    // cfg("checkpoint=WiredTigerCheckpoint,debug=(checkpoint_read_timestamp=-1)");
+    const std::string cfg("checkpoint=WiredTigerCheckpoint");
+    // const std::string cfg("checkpoint=toto");
+    std::cout << "Opening checkpoint cursor" << std::endl;
+    testutil_check(session->open_cursor(
+      session, collection_name.c_str(), nullptr, cfg.c_str(), &checkpoint_cursor));
+
+    // // If we remove the condition.. what do we have?
+    // std::cout << checkpoint_cursor->checkpoint_id(checkpoint_cursor) << std::endl;
+    // testutil_check(checkpoint_cursor->close(checkpoint_cursor));
+
+    std::cout << "Finish" << std::endl;
+    return 0;
+    /* */
+
+
+
+
+
+
+
+    // Create a checkpoint here.
+    logger::log_msg(LOG_INFO, "Checkpoint...");
+    testutil_check(session->checkpoint(session, ""));
+    logger::log_msg(LOG_INFO, "Checkpoint done!");
+
+    // logger::log_msg(LOG_INFO, "Checkpoint...");
+    // testutil_check(session->checkpoint(session, ""));
+    // logger::log_msg(LOG_INFO, "Checkpoint done!");
+
+    // Open a bulk cursor and close it.
+    logger::log_msg(LOG_INFO, "Opening bulk cursor...");
+    // WT_CURSOR *bulk_cursor;
+    testutil_check(
+      session->open_cursor(session, collection_name.c_str(), nullptr, "bulk", &bulk_cursor));
+    logger::log_msg(LOG_INFO, "Closing bulk cursor...");
+    testutil_check(bulk_cursor->close(bulk_cursor));
+    logger::log_msg(LOG_INFO, "Closed!");
+
+    // int ret;
+    //   do {
+    //       // logger::log_msg(LOG_INFO, "Opening checkpoint cursor...");
+    //       ret = session->open_cursor(session, collection_name.c_str(), nullptr,
+    //         "checkpoint=WiredTigerCheckpoint", &checkpoint_cursor);
+    //   } while(ret == EBUSY);
+
+    // testutil_check(session->checkpoint(session, ""));
+    // logger::log_msg(LOG_INFO, "Checkpoint done");
+    logger::log_msg(LOG_INFO, "Opening checkpoint cursor...");
+    testutil_check(session->open_cursor(session, collection_name.c_str(), nullptr,
+      "checkpoint=WiredTigerCheckpoint", &checkpoint_cursor));
+    std::cout << "In the test, the checkpoint id from the cursor is "
+              << checkpoint_cursor->checkpoint_id(checkpoint_cursor) << std::endl;
+    testutil_check(checkpoint_cursor->close(checkpoint_cursor));
+
+    logger::log_msg(LOG_INFO, "Joining...");
     t.join();
-
-    /* Close cursors. */
-    for (auto c : cursors)
-        testutil_check(c->close(c));
 
     /* Another message. */
     logger::log_msg(LOG_INFO, "End of test.");

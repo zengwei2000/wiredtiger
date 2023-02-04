@@ -427,8 +427,10 @@ __ckpt_last_name(WT_SESSION_IMPL *session, const char *config, const char **name
     else {
         if (orderp != NULL)
             *orderp = found;
-        if (timep != NULL)
+        if (timep != NULL) {
             *timep = time;
+            // printf("Returning time %lu\n", time);
+        }
     }
 
     if (0) {

@@ -363,7 +363,7 @@ __wt_cache_destroy(WT_SESSION_IMPL *session)
     if (cache == NULL)
         return (0);
 
-    /* The cache should be empty at this point.  Complain if not. */
+    /* The cache should be empty at this point, complain if not. */
     if (cache->pages_inmem != cache->pages_evicted)
         __wt_errx(session,
           "cache server: exiting with %" PRIu64 " pages in memory and %" PRIu64 " pages evicted",

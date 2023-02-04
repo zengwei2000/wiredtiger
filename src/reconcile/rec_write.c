@@ -2304,6 +2304,8 @@ __wt_bulk_wrapup(WT_SESSION_IMPL *session, WT_CURSOR_BULK *cbulk)
     WT_PAGE *parent;
     WT_RECONCILE *r;
 
+    // const char *checkpoint_cfg[] = {WT_CONFIG_BASE(session, WT_SESSION_checkpoint), NULL};
+
     btree = S2BT(session);
     if ((r = cbulk->reconcile) == NULL)
         return (0);
@@ -2337,6 +2339,9 @@ __wt_bulk_wrapup(WT_SESSION_IMPL *session, WT_CURSOR_BULK *cbulk)
 err:
     WT_TRET(__rec_cleanup(session, r));
     WT_TRET(__rec_destroy(session, &cbulk->reconcile));
+
+    // printf("Calling checkpoint from cursor\n");
+    // ret = __wt_txn_checkpoint(session, checkpoint_cfg, true);
 
     return (ret);
 }

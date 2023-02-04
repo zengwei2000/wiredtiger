@@ -107,7 +107,7 @@ class test_checkpoint(wttest.WiredTigerTestCase):
         self.large_updates(uri, ds, nrows, value_a, 20)
 
         # Open the checkpoint.
-        ckpt_cursor = self.session.open_cursor(uri, None, 'checkpoint=WiredTigerCheckpoint')
+        ckpt_cursor = self.session.open_cursor(uri, None, 'checkpoint=WiredTigerCheckpoint1')
         ckpt_cursor.set_key(ds.key(1))
 
         # Write some further data, and prepare it at time 30.
