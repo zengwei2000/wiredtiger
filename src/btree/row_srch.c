@@ -88,6 +88,7 @@ __wt_search_insert(
     WT_COLLATOR *collator;
     WT_INSERT *ins, **insp, *last_ins;
     WT_ITEM key;
+    WT_ITEM validate_upper_key, validate_lower_key;
     size_t match, skiphigh, skiplow;
     int cmp, i;
 
@@ -122,16 +123,56 @@ __wt_search_insert(
 
         if (cmp > 0) { /* Keep going at this level */
             insp = &ins->next[i];
+            WT_ASSERT_ALWAYS(session, match >= skiplow,
+              "Detected low key that has fewer common prefix bytes than the previous low key.");
             skiplow = match;
         } else if (cmp < 0) { /* Drop down a level */
             cbt->next_stack[i] = ins;
             cbt->ins_stack[i--] = insp--;
+            WT_ASSERT_ALWAYS(session, match >= skiphigh,
+              "Detected high key that has fewer common prefix bytes than the previous high key.");
             skiphigh = match;
         } else
             for (; i >= 0; i--) {
                 cbt->next_stack[i] = ins->next[i];
                 cbt->ins_stack[i] = &ins->next[i];
             }
+    }
+
+    /*
+     * At the end of the search check that all the pointers inserted into cbt->next_stack are in
+     * decreasing order.
+     *
+     * FIXME-10461 - Stick this inside a HAVE_DIAG and then its own flag. It's gonna murder perf. We
+     * could run a faster check if we just detect non-contiguous occurrences of the same key. It's a
+     * weaker guarantee but should (should) be good enough.
+     */
+    validate_upper_key.mem = NULL;
+    validate_upper_key.memsize = 0;
+    validate_upper_key.flags = 0;
+
+    validate_lower_key.mem = NULL;
+    validate_lower_key.memsize = 0;
+    validate_lower_key.flags = 0;
+
+    for (i = WT_SKIP_MAXDEPTH - 2; i >= 0; i--) {
+        /*
+         * Skip if either pointer is to the end of the skiplist, or if both pointers are the same.
+         */
+        if (cbt->next_stack[i] == NULL || cbt->next_stack[i + 1] == NULL ||
+          (cbt->next_stack[i] == cbt->next_stack[i + 1]))
+            continue;
+        validate_lower_key.data = WT_INSERT_KEY(cbt->next_stack[i]);
+        validate_lower_key.size = WT_INSERT_KEY_SIZE(cbt->next_stack[i]);
+
+        validate_upper_key.data = WT_INSERT_KEY(cbt->next_stack[i + 1]);
+        validate_upper_key.size = WT_INSERT_KEY_SIZE(cbt->next_stack[i + 1]);
+
+        /* Force match to zero for a full comparison of keys */
+        match = 0;
+        WT_RET(
+          __wt_compare_skip(session, NULL, &validate_upper_key, &validate_lower_key, &cmp, &match));
+        WT_ASSERT((WT_SESSION_IMPL *)session, cmp >= 0);
     }
 
     /*

@@ -89,13 +89,16 @@
 /* Elements in an array. */
 #define WT_ELEMENTS(a) (sizeof(a) / sizeof((a)[0]))
 
-/* 10 level skip lists, 1/4 have a link to the next element. */
-#define WT_SKIP_MAXDEPTH 10
-/* 
- * FIXME WT-10461 - Changing this from 25% to 50% drastically increases 
- * the number of levels in the skiplist which increases the chance of the bug firing.
- * Do we need this test long term? If not we can hack this to 50% for now and not deliver the change. 
+/* 10 level skip lists, 1/4 have a link to the next element.
+ *
+ * FIXME WT-10461 - We're forcing insert next_stacks to sit across cache lines by using
+ * aligned_alloc for inserts, and then forcing skiplists to be length 8 and always filled. This
+ * means the last two pointers in the skiplist are always on a separate cache line to the lower
+ * levels of the list.
+ *
+ * Change this back when merging actual code.
  */
+#define WT_SKIP_MAXDEPTH 8
 #define WT_SKIP_PROBABILITY (UINT32_MAX - 1)
 
 /*

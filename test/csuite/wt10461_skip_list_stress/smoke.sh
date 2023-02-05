@@ -2,7 +2,7 @@
 
 set -e
 
-# Smoke-test skip_list_stress-backup as part of running "make check".
+# Smoke-test wt10461_skip_list_stress-backup as part of running "make check".
 
 if [ -n "$1" ]
 then
@@ -15,7 +15,7 @@ else
     # copy of the script that lives under the build directory. Otherwise
     # passing the binary path is required.
     binary_dir=${binary_dir:-`dirname $0`}
-    test_bin=$binary_dir/new_skip_list_stress
+    test_bin=$binary_dir/wt10461_skip_list_stress
 fi
 
 $TEST_WRAPPER $test_bin -v 3
