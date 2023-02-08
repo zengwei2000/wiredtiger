@@ -1525,7 +1525,7 @@ __wt_ref_addr_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *copy)
     /* If NULL, there is no information. */
     if (addr == NULL)
         return (false);
-
+    
     /* If off-page, the pointer references a WT_ADDR structure. */
     if (__wt_off_page(page, addr)) {
         WT_TIME_AGGREGATE_COPY(&copy->ta, &addr->ta);
@@ -1580,7 +1580,6 @@ __wt_ref_block_free(WT_SESSION_IMPL *session, WT_REF *ref)
         return (0);
 
     WT_RET(__wt_btree_block_free(session, addr.addr, addr.size));
-
     /* Clear the address (so we don't free it twice). */
     __wt_ref_addr_free(session, ref);
     return (0);

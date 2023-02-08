@@ -330,6 +330,6 @@ __wt_free_int(WT_SESSION_IMPL *session, const void *p_arg)
      */
     if (session != NULL)
         WT_STAT_CONN_INCR(session, memory_free);
-
+    
     free(p);
 }

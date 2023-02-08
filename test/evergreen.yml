@@ -3611,6 +3611,91 @@ tasks:
         vars:
           format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360
 
+  - name: format-stress-test-no-barrier-1
+    tags: ["WT-9512"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+        <<: *configure_flags_with_builtins
+        NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
+        CC_OPTIMIZE_LEVEL: -DCC_OPTIMIZE_LEVEL=-O0
+      - func: "format test script"
+        vars:
+          format_test_script_args: -F -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -v -c ../../../WT-9512_TABLE_2.CONFIG
+
+  - name: format-stress-test-no-barrier-2
+    tags: ["WT-9512"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+        <<: *configure_flags_with_builtins
+        NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
+        CC_OPTIMIZE_LEVEL: -DCC_OPTIMIZE_LEVEL=-O0
+      - func: "format test script"
+        vars:
+          format_test_script_args: -F -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -v -c ../../../WT-9512_TABLE_2.CONFIG
+
+
+  - name: format-stress-test-no-barrier-3
+    tags: ["WT-9512"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+        <<: *configure_flags_with_builtins
+        NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
+        CC_OPTIMIZE_LEVEL: -DCC_OPTIMIZE_LEVEL=-O0
+      - func: "format test script"
+        vars:
+          format_test_script_args: -F -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -v -c ../../../WT-9512_TABLE_2.CONFIG
+
+  - name: format-stress-test-no-barrier-4
+    tags: ["WT-9512"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+        <<: *configure_flags_with_builtins
+        NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
+        CC_OPTIMIZE_LEVEL: -DCC_OPTIMIZE_LEVEL=-O0      
+      - func: "format test script"
+        vars:
+          format_test_script_args: -F -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -v -c ../../../WT-9512_TABLE_2.CONFIG
+
+  - name: format-stress-test-no-barrier-5
+    tags: ["WT-9512"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+        <<: *configure_flags_with_builtins
+        CC_OPTIMIZE_LEVEL: -DCC_OPTIMIZE_LEVEL=-O0
+        NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
+      - func: "format test script"
+        vars:
+          format_test_script_args: -F -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -v -c ../../../WT-9512_TABLE_2.CONFIG
+
+  - name: format-stress-test-no-barrier-6
+    tags: ["WT-9512"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+        <<: *configure_flags_with_builtins
+        CC_OPTIMIZE_LEVEL: -DCC_OPTIMIZE_LEVEL=-O0
+        NON_BARRIER_DIAGNOSTIC_YIELDS: -DNON_BARRIER_DIAGNOSTIC_YIELDS=1
+      - func: "format test script"
+        vars:
+          format_test_script_args: -F -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -v -c ../../../WT-9512_TABLE_2.CONFIG
+
   - name: format-stress-test-no-barrier-nonstandalone
     tags: ["stress-test-no-barrier-nonstandalone"]
     exec_timeout_secs: 25200
@@ -4773,6 +4858,11 @@ buildvariants:
     - name: ".pull_request !.pull_request_compilers !.python !tiered-unittest-test"
     - name: examples-c-test
     - name: format-asan-smoke-test
+    - name: ".WT-9512"
+    - name: ".stress-test-1"
+    - name: ".stress-test-2"
+    - name: ".stress-test-3"
+    - name: ".stress-test-4"
 
 # Very minimal set without any extensions
 - name: ubuntu2004-minimal
@@ -4923,6 +5013,7 @@ buildvariants:
       LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libeatmydata.so:$WT_TOPDIR/TCMALLOC_LIB/lib/libtcmalloc.so
       LD_LIBRARY_PATH=$WT_BUILDDIR:$WT_TOPDIR/TCMALLOC_LIB/lib
     CMAKE_PREFIX_PATH: -DCMAKE_PREFIX_PATH="$(pwd)/TCMALLOC_LIB"
+    CC_OPTIMIZE_LEVEL: -DCC_OPTIMIZE_LEVEL=-O0
     python_binary: '/opt/mongodbtoolchain/v4/bin/python3'
   tasks:
   # FIXME-WT-8947: For now run the whole stress test suite like we do on the x86 platform. But later
@@ -4940,6 +5031,7 @@ buildvariants:
     - name: ".stress-test-4-nonstandalone"
     - name: ".stress-test-no-barrier-nonstandalone"
     - name: format-abort-recovery-stress-test-nonstandalone
+    - name: ".WT-9512"
 
 - name: large-scale-tests
   display_name: "Large scale tests"
@@ -5278,3 +5370,4 @@ buildvariants:
     - name: unit-test-nonstandalone
     - name: unit-test-long-nonstandalone
       distros: amazon2-arm64-large
+      
