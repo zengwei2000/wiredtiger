@@ -52,6 +52,9 @@
 #define DIR_STORE_BUCKET_NAME "bucket"
 #define S3_STORE_BUCKET_NAME "s3testext;ap-southeast-2"
 
+#define DIR_STORE "dir_store"
+#define S3_STORE "s3_store"
+
 #define TESTUTIL_ENV_CONFIG_TIERED                   \
     ",tiered_storage=(bucket=%s"                     \
     ",bucket_prefix=pfx-,local_retention=%d,name=%s" \
