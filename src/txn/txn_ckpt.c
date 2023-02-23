@@ -711,7 +711,6 @@ __checkpoint_prepare(WT_SESSION_IMPL *session, bool *trackingp, const char *cfg[
      * We never do checkpoints in the default session (with id zero).
      */
     WT_ASSERT(session, session->id != 0 && txn_global->checkpoint_id == 0);
-    // printf("The session->id is %u\n", session->id);
     txn_global->checkpoint_id = session->id;
 
     /*
@@ -1146,7 +1145,6 @@ __txn_checkpoint(WT_SESSION_IMPL *session, const char *cfg[])
         conn->txn_global.checkpoint_running_hs = true;
         WT_STAT_CONN_SET(session, txn_checkpoint_running_hs, 1);
 
-        // printf("Dhandle is HS\n");
         WT_WITH_DHANDLE(session, hs_dhandle, ret = __wt_checkpoint(session, cfg));
 
         WT_STAT_CONN_SET(session, txn_checkpoint_running_hs, 0);
@@ -1834,7 +1832,6 @@ __checkpoint_lock_dirty_tree(
 
         /* Skip the clean btree until the btree has obsolete pages. */
         if (skip_ckpt && !F_ISSET(btree, WT_BTREE_OBSOLETE_PAGES)) {
-            // printf("Setting WT_BTREE_SKIP_CKPT 1 %s\n", btree->dhandle->name);
             F_SET(btree, WT_BTREE_SKIP_CKPT);
             goto skip;
         }
@@ -2034,7 +2031,6 @@ __checkpoint_mark_skip(WT_SESSION_IMPL *session, WT_CKPT *ckptbase, bool force)
           (strcmp(name, (ckpt - 2)->name) == 0 ||
             (WT_PREFIX_MATCH(name, WT_CHECKPOINT) &&
               WT_PREFIX_MATCH((ckpt - 2)->name, WT_CHECKPOINT)))) {
-            // printf("Setting WT_BTREE_SKIP_CKPT 2 %s\n", btree->dhandle->name);
             F_SET(btree, WT_BTREE_SKIP_CKPT);
             /*
              * If there are potentially extra checkpoints to delete, we set the timer to recheck
@@ -2398,11 +2394,8 @@ __wt_checkpoint(WT_SESSION_IMPL *session, const char *cfg[])
     WT_RET(__wt_config_gets_def(session, cfg, "force", 0, &cval));
     force = cval.val != 0;
     WT_SAVE_DHANDLE(session, ret = __checkpoint_lock_dirty_tree(session, true, force, true, cfg));
-    // printf("Call after __checkpoint_lock_dirty_tree, ret is %d\n", ret);
-    if (ret != 0 || F_ISSET(S2BT(session), WT_BTREE_SKIP_CKPT)) {
-        printf("Going to done for dhandle %s!\n", session->dhandle->name);
+    if (ret != 0 || F_ISSET(S2BT(session), WT_BTREE_SKIP_CKPT))
         goto done;
-    }
     ret = __checkpoint_tree(session, true, cfg);
 
 done:

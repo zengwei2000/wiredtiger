@@ -324,7 +324,6 @@ __wt_metadata_search(WT_SESSION_IMPL *session, const char *key, char **valuep)
 
     WT_ERR(cursor->get_value(cursor, &value));
     WT_ERR(__wt_strdup(session, value, valuep));
-    // printf("\nRow is %s\n", value);
 
 err:
     WT_TRET(__wt_metadata_cursor_release(session, &cursor));

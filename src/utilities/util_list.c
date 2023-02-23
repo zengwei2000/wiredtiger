@@ -173,7 +173,6 @@ list_print(WT_SESSION *session, const char *uri, bool cflag, bool vflag)
         if (!cflag && !vflag)
             continue;
 
-        printf("The key is %s\n", key);
         if (cflag && (ret = list_print_checkpoint(session, key)) != 0)
             return (ret);
         if (vflag) {

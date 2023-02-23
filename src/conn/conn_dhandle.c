@@ -379,7 +379,6 @@ __wt_conn_dhandle_close(WT_SESSION_IMPL *session, bool final, bool mark_dead)
             if (F_ISSET(conn, WT_CONN_IN_MEMORY) || F_ISSET(btree, WT_BTREE_NO_CHECKPOINT))
                 discard = true;
             else {
-                // printf("Skipping __wt_checkpoint_close\n");
                 WT_TRET(__wt_checkpoint_close(session, final));
                 if (!final && ret == EBUSY)
                     WT_ERR(ret);
@@ -529,10 +528,8 @@ __wt_conn_dhandle_open(WT_SESSION_IMPL *session, const char *cfg[], uint32_t fla
      * operations. The reverse won't happen because when the handle from a verify or other special
      * operation is closed, there won't be updates in the tree that can block the close.
      */
-    if (F_ISSET(dhandle, WT_DHANDLE_OPEN)) {
-        printf("Calling __wt_conn_dhandle_close\n");
+    if (F_ISSET(dhandle, WT_DHANDLE_OPEN))
         WT_ERR(__wt_conn_dhandle_close(session, false, false));
-    }
 
     /* Discard any previous configuration, set up the new configuration. */
     __conn_dhandle_config_clear(session);

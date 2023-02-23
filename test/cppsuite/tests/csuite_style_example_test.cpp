@@ -151,6 +151,7 @@ main(int argc, char *argv[])
     bulk_cursor->insert(bulk_cursor);
     testutil_check(bulk_cursor->close(bulk_cursor));
     std::cout << "Bulk cursor closed!" << std::endl;
+    testutil_check(session->checkpoint(session, "name=toto2"));
 
     std::cout << "Opening checkpoints for " << filename << "..." << std::endl;
     if ((ret = __wt_metadata_get_ckptlist((WT_SESSION *)session, filename.c_str(), &ckptbase)) ==
@@ -176,8 +177,8 @@ main(int argc, char *argv[])
     // const std::string
     // cfg("checkpoint=WiredTigerCheckpoint,debug=(checkpoint_read_timestamp=-1)");
     // const std::string cfg;
-    // const std::string cfg("checkpoint=WiredTigerCheckpoint");
-    const std::string cfg("checkpoint=toto");
+    const std::string cfg("checkpoint=WiredTigerCheckpoint");
+    // const std::string cfg("checkpoint=toto");
     std::cout << "Opening checkpoint cursor" << std::endl;
     testutil_check(session->open_cursor(
       session, collection_name.c_str(), nullptr, cfg.c_str(), &checkpoint_cursor));
