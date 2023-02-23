@@ -507,13 +507,12 @@ __wt_session_get_btree_ckpt(WT_SESSION_IMPL *session, const char *uri, const cha
     // Make sure there are at least 2 checkpoints.
     // Don't use the first one, it's the one hanging. Use checkpoints[1].
     // If there is only 1 checkpoint, return an empty object.
-    WT_RET(__wt_metadata_get_ckptlist((WT_SESSION*)session, uri, &ckptbase));
-    WT_CKPT_FOREACH (ckptbase, ckpt)
-    {
+    WT_RET(__wt_metadata_get_ckptlist((WT_SESSION *)session, uri, &ckptbase));
+    WT_CKPT_FOREACH (ckptbase, ckpt) {
         printf("Checkpoint is %s\n", ckpt->name);
         ++num_checkpoints;
     }
-        /* Sort in creation-order. */
+    /* Sort in creation-order. */
     __wt_qsort(ckptbase, num_checkpoints, sizeof(WT_CKPT), __ckpt_compare_order);
     WT_CKPT_FOREACH (ckptbase, ckpt)
         printf("Checkpoint is %s\n", ckpt->name);
@@ -536,13 +535,14 @@ __wt_session_get_btree_ckpt(WT_SESSION_IMPL *session, const char *uri, const cha
     printf("The checkpoint name is set to %s\n", checkpoint_name);
     do {
         /*
-        * Test for the internal checkpoint name (WiredTigerCheckpoint). Note: must_resolve is true in a
-        * subset of the cases where is_unnamed_ckpt is true.
-        */
+         * Test for the internal checkpoint name (WiredTigerCheckpoint). Note: must_resolve is true
+         * in a subset of the cases where is_unnamed_ckpt is true.
+         */
         must_resolve = WT_STRING_MATCH(WT_CHECKPOINT, checkpoint_name, strlen(checkpoint_name));
         printf("must_resolve? %d\n", must_resolve);
         /* FIXME-WT-10564 */
-        is_unnamed_ckpt = strlen(checkpoint_name) >= strlen(WT_CHECKPOINT) && WT_PREFIX_MATCH(checkpoint_name, WT_CHECKPOINT);
+        is_unnamed_ckpt = strlen(checkpoint_name) >= strlen(WT_CHECKPOINT) &&
+          WT_PREFIX_MATCH(checkpoint_name, WT_CHECKPOINT);
         printf("is_unnamed_ckpt? %d\n", is_unnamed_ckpt);
 
         ret = 0;
@@ -567,8 +567,7 @@ __wt_session_get_btree_ckpt(WT_SESSION_IMPL *session, const char *uri, const cha
             // printf("Retrieving ds time 1, checkpoint name is %s\n", checkpoint);
             /* Look up the most recent data store checkpoint. This fetches the exact name to use. */
             WT_RET(__wt_meta_checkpoint_last_name(session, uri, &checkpoint, &ds_order, &ds_time));
-        }
-        else
+        } else
             /* Look up the checkpoint by name and get its time and order information. */
             WT_RET(__wt_meta_checkpoint_by_name(session, uri, checkpoint, &ds_order, &ds_time));
 
@@ -594,8 +593,8 @@ __wt_session_get_btree_ckpt(WT_SESSION_IMPL *session, const char *uri, const cha
          */
         if (ckpt_snapshot != NULL) {
             // printf("ckpt_snapshot is NOT NULL\n");
-            // printf("Updating ckpt_snapshot->stable_ts with first_snapshot_time %zu\n", first_snapshot_time);
-            // ckpt_snapshot->stable_ts = first_snapshot_time;
+            // printf("Updating ckpt_snapshot->stable_ts with first_snapshot_time %zu\n",
+            // first_snapshot_time); ckpt_snapshot->stable_ts = first_snapshot_time;
             WT_RET(__session_fetch_checkpoint_meta(session, is_unnamed_ckpt ? NULL : checkpoint,
               ckpt_snapshot, &snapshot_time, &stable_time, &oldest_time));
 
@@ -623,7 +622,8 @@ __wt_session_get_btree_ckpt(WT_SESSION_IMPL *session, const char *uri, const cha
               oldest_time > snapshot_time) {
                 // We may want to check all checkpoints here if we are hanging.
                 printf("Getting all checkpoints for %s...\n", uri);
-                // if ((ret = __wt_metadata_get_ckptlist((WT_SESSION*)session, uri, &ckptbase)) == 0) {
+                // if ((ret = __wt_metadata_get_ckptlist((WT_SESSION*)session, uri, &ckptbase)) ==
+                // 0) {
                 //     WT_CKPT_FOREACH (ckptbase, ckpt)
                 //         printf("Checkpoint is %s\n", ckpt->name);
                 // } else {
@@ -636,11 +636,12 @@ __wt_session_get_btree_ckpt(WT_SESSION_IMPL *session, const char *uri, const cha
                     // Try a new checkpoint as part of the list.
                     // What if there is a checkpoint running?
                     ++ckptbase;
-                    if(ckptbase->name == NULL) {
+                    if (ckptbase->name == NULL) {
                         printf("We have gone through all the checkpoints...\n");
                         return (WT_NOTFOUND);
                     }
-                    WT_RET(__wt_strndup(session, ckptbase->name, strlen(ckptbase->name), &checkpoint_name));
+                    WT_RET(__wt_strndup(
+                      session, ckptbase->name, strlen(ckptbase->name), &checkpoint_name));
                     printf("The checkpoint name is set to %s\n", checkpoint_name);
                 }
                 ret = __wt_set_return(session, EBUSY);
