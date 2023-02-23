@@ -175,8 +175,9 @@ main(int argc, char *argv[])
     // testutil_check(session->checkpoint(session, ""));
     // const std::string
     // cfg("checkpoint=WiredTigerCheckpoint,debug=(checkpoint_read_timestamp=-1)");
-    const std::string cfg("checkpoint=WiredTigerCheckpoint");
-    // const std::string cfg("checkpoint=toto");
+    // const std::string cfg;
+    // const std::string cfg("checkpoint=WiredTigerCheckpoint");
+    const std::string cfg("checkpoint=toto");
     std::cout << "Opening checkpoint cursor" << std::endl;
     testutil_check(session->open_cursor(
       session, collection_name.c_str(), nullptr, cfg.c_str(), &checkpoint_cursor));
