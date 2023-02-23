@@ -308,6 +308,8 @@ class test_checkpoint_last(wttest.WiredTigerTestCase):
             # Verify the "last" checkpoint sees the correct value.
             cursor = ds.open_cursor(
                 uri, None, "checkpoint=WiredTigerCheckpoint")
+            id = cursor.checkpoint_id()
+            # self.prout(id)
             self.assertEquals(cursor[ds.key(10)], value)
             # Don't close the checkpoint cursor, we want it to remain open until
             # the test completes.
