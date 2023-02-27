@@ -103,8 +103,12 @@ __wt_hs_find_upd(WT_SESSION_IMPL *session, uint32_t btree_id, WT_ITEM *key,
     }
 
     WT_ERR_NOTFOUND_OK(__wt_curhs_open(session, NULL, &hs_cursor), true);
-    /* Do this separately for now because the behavior below is confusing if it triggers. */
-    WT_ASSERT(session, ret != WT_NOTFOUND);
+    /*
+     * Do this separately for now because the behavior below is confusing if it triggers. Note that
+     * opening a checkpoint cursor can fail.
+     */
+    if (!WT_READING_CHECKPOINT(session))
+        WT_ASSERT(session, ret != WT_NOTFOUND);
     WT_ERR(ret);
 
     /*
@@ -240,7 +244,9 @@ err:
     if (ret != 0)
         upd_value->type = WT_UPDATE_INVALID;
 
-    WT_ASSERT(session, ret != WT_NOTFOUND);
+    /* Opening a checkpoint cursor may have failed. */
+    if (!WT_READING_CHECKPOINT(session))
+        WT_ASSERT(session, ret != WT_NOTFOUND);
 
     if (hs_cursor != NULL)
         WT_TRET(hs_cursor->close(hs_cursor));
