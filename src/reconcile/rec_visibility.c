@@ -636,11 +636,17 @@ __rec_fill_tw_from_upd_select(
   WT_SESSION_IMPL *session, WT_PAGE *page, WT_CELL_UNPACK_KV *vpack, WT_UPDATE_SELECT *upd_select)
 {
     WT_TIME_WINDOW *select_tw;
-    WT_UPDATE *last_upd, *upd, *tombstone;
+    WT_UPDATE *last_upd, *upd, *tombstone, *debug_upd;
+    WT_UPDATE_SELECT *debug_upd_select;
+    wt_timestamp_t pinned_ts;
 
     upd = upd_select->upd;
     last_upd = tombstone = NULL;
     select_tw = &upd_select->tw;
+
+    debug_upd_select = upd_select;
+    debug_upd = upd_select->upd;
+    pinned_ts = 0;
 
     /*
      * The start timestamp is determined by the commit timestamp when the key is first inserted (or
@@ -738,6 +744,25 @@ __rec_fill_tw_from_upd_select(
              * If the tombstone is aborted concurrently, we should still have appended the onpage
              * value.
              */
+            if (!(tombstone->txnid != WT_TXN_ABORTED &&
+                  __wt_txn_upd_visible_all(session, tombstone) && upd_select->upd == NULL)) {
+                if (tombstone->txnid == WT_TXN_ABORTED) {
+                    WT_RET(__wt_msg(session, "tombstone->txnid is aborted and should not be"));
+                } else if (!__wt_txn_upd_visible_all(session, tombstone)) {
+                    __wt_txn_pinned_timestamp(session, &pinned_ts);
+                    WT_RET(__wt_msg(session,
+                      "tombstone->durable_ts %" PRIu64 " is not <= pinned timestamp: %" PRIu64,
+                      tombstone->durable_ts, pinned_ts));
+                } else if (upd_select->upd != NULL) {
+                    WT_RET(__wt_msg(session, "upd_select->upd should be null"));
+                }
+
+                WT_RET(__wt_msg(session,
+                  "debug_upd_select->upd->txnid: %" PRIu64 " upd_select->upd->txn_id: %" PRIu64,
+                  debug_upd_select->upd->txnid, upd_select->upd->txnid));
+                WT_RET(__wt_msg(session, "debug_upd->txnid: %" PRIu64 " upd->txn_id: %" PRIu64,
+                  debug_upd->txnid, upd->txnid));
+            }
             WT_ASSERT_ALWAYS(session,
               tombstone->txnid != WT_TXN_ABORTED && __wt_txn_upd_visible_all(session, tombstone) &&
                 upd_select->upd == NULL,
