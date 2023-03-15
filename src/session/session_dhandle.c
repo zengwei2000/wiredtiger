@@ -582,7 +582,8 @@ __wt_session_get_btree_ckpt(WT_SESSION_IMPL *session, const char *uri, const cha
                  * can occur when a checkpoint on a single file has been performed by a bulk
                  * operation and no system wide checkpoint has been done since then.
                  */
-                if (!S2C(session)->txn_global.checkpoint_running) {
+                if (session->hs_checkpoint == NULL &&
+                  !S2C(session)->txn_global.checkpoint_running) {
                     ret = __wt_set_return(session, WT_NOTFOUND);
                     goto err;
                 } else
