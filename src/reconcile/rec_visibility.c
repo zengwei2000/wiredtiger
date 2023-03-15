@@ -67,14 +67,16 @@ __rec_delete_hs_upd_save(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_INSERT *i
  *     WT_TXN_NONE and timestamps to WT_TS_NONE in time window for in-memory databases.
  */
 static int
-__rec_append_orig_value(
-  WT_SESSION_IMPL *session, WT_PAGE *page, WT_UPDATE *upd, WT_CELL_UNPACK_KV *unpack)
+__rec_append_orig_value(WT_SESSION_IMPL *session, WT_PAGE *page, WT_UPDATE *upd,
+  WT_UPDATE *append_debug, WT_CELL_UNPACK_KV *unpack)
 {
     WT_DECL_ITEM(tmp);
     WT_DECL_RET;
     WT_UPDATE *append, *oldest_upd, *tombstone;
     size_t size, total_size;
     bool tombstone_globally_visible;
+
+    WT_UNUSED(append_debug);
 
     WT_ASSERT_ALWAYS(session,
       upd != NULL && unpack != NULL && unpack->type != WT_CELL_DEL && !unpack->tw.prepare,
@@ -87,8 +89,11 @@ __rec_append_orig_value(
     /* Review the current update list, checking conditions that mean no work is needed. */
     for (;; upd = upd->next) {
         /* Done if the update was restored from the data store or the history store. */
-        if (F_ISSET(upd, WT_UPDATE_RESTORED_FROM_DS | WT_UPDATE_RESTORED_FROM_HS))
+        if (F_ISSET(upd, WT_UPDATE_RESTORED_FROM_DS | WT_UPDATE_RESTORED_FROM_HS)){
+            // This debug returned null.
+            // append_debug = upd;
             return (0);
+        }
 
         /*
          * Done if the on page value already appears on the update list. We can't do the same check
@@ -189,6 +194,16 @@ __rec_append_orig_value(
         append->durable_ts = unpack->tw.durable_start_ts;
         F_SET(append, WT_UPDATE_RESTORED_FROM_DS);
     }
+
+    WT_ERR(__wt_upd_alloc(session, tmp, WT_UPDATE_STANDARD, &append_debug, &size));
+    append_debug->txnid = append->txnid;
+    append_debug->start_ts = append->start_ts;
+    append_debug->durable_ts = append->durable_ts;
+    F_SET(append_debug, WT_UPDATE_RESTORED_FROM_DS);
+
+    // if (append == NULL && !tombstone_globally_visible){
+    //     WT_ASSERT(session, false);
+    // }
 
     if (tombstone != NULL) {
         tombstone->next = append;
@@ -636,9 +651,10 @@ __rec_fill_tw_from_upd_select(
   WT_SESSION_IMPL *session, WT_PAGE *page, WT_CELL_UNPACK_KV *vpack, WT_UPDATE_SELECT *upd_select)
 {
     WT_TIME_WINDOW *select_tw;
-    WT_UPDATE *last_upd, *upd, *tombstone, *debug_upd;
+    WT_UPDATE *last_upd, *upd, *tombstone, *debug_upd, *append_debug;
     WT_UPDATE_SELECT *debug_upd_select;
     wt_timestamp_t pinned_ts;
+    bool tombstone_globally_visible_before_append_debug, tombstone_globally_visible_after_append_debug;
 
     upd = upd_select->upd;
     last_upd = tombstone = NULL;
@@ -647,6 +663,18 @@ __rec_fill_tw_from_upd_select(
     debug_upd_select = upd_select;
     debug_upd = upd_select->upd;
     pinned_ts = 0;
+    append_debug = NULL;
+
+    tombstone_globally_visible_before_append_debug = false;
+    tombstone_globally_visible_after_append_debug = false;
+
+    WT_UNUSED(append_debug);
+    WT_UNUSED(pinned_ts);
+    WT_UNUSED(debug_upd_select);
+    WT_UNUSED(debug_upd);
+    WT_UNUSED(tombstone_globally_visible_before_append_debug);
+    WT_UNUSED(tombstone_globally_visible_after_append_debug);
+
 
     /*
      * The start timestamp is determined by the commit timestamp when the key is first inserted (or
@@ -720,7 +748,8 @@ __rec_fill_tw_from_upd_select(
           !F_ISSET(tombstone, WT_UPDATE_RESTORED_FROM_DS | WT_UPDATE_RESTORED_FROM_HS),
           "A tombstone written to the disk image or history store should be accompanied by "
           "the full value.");
-        WT_RET(__rec_append_orig_value(session, page, tombstone, vpack));
+        tombstone_globally_visible_before_append_debug = __wt_txn_upd_visible_all(session, tombstone);
+        WT_RET(__rec_append_orig_value(session, page, tombstone, append_debug, vpack));
 
         /*
          * We may have updated the global transaction concurrently and the tombstone is now globally
@@ -744,25 +773,7 @@ __rec_fill_tw_from_upd_select(
              * If the tombstone is aborted concurrently, we should still have appended the onpage
              * value.
              */
-            if (!(tombstone->txnid != WT_TXN_ABORTED &&
-                  __wt_txn_upd_visible_all(session, tombstone) && upd_select->upd == NULL)) {
-                if (tombstone->txnid == WT_TXN_ABORTED) {
-                    WT_RET(__wt_msg(session, "tombstone->txnid is aborted and should not be"));
-                } else if (!__wt_txn_upd_visible_all(session, tombstone)) {
-                    __wt_txn_pinned_timestamp(session, &pinned_ts);
-                    WT_RET(__wt_msg(session,
-                      "tombstone->durable_ts %" PRIu64 " is not <= pinned timestamp: %" PRIu64,
-                      tombstone->durable_ts, pinned_ts));
-                } else if (upd_select->upd != NULL) {
-                    WT_RET(__wt_msg(session, "upd_select->upd should be null"));
-                }
-
-                WT_RET(__wt_msg(session,
-                  "debug_upd_select->upd->txnid: %" PRIu64 " upd_select->upd->txn_id: %" PRIu64,
-                  debug_upd_select->upd->txnid, upd_select->upd->txnid));
-                WT_RET(__wt_msg(session, "debug_upd->txnid: %" PRIu64 " upd->txn_id: %" PRIu64,
-                  debug_upd->txnid, upd->txnid));
-            }
+            tombstone_globally_visible_after_append_debug = __wt_txn_upd_visible_all(session, tombstone);
             WT_ASSERT_ALWAYS(session,
               tombstone->txnid != WT_TXN_ABORTED && __wt_txn_upd_visible_all(session, tombstone) &&
                 upd_select->upd == NULL,
@@ -771,6 +782,8 @@ __rec_fill_tw_from_upd_select(
             upd_select->upd = tombstone;
         }
     }
+
+    __wt_free(session, append_debug);
 
     return (0);
 }
@@ -784,9 +797,11 @@ __wt_rec_upd_select(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_INSERT *ins, W
   WT_CELL_UNPACK_KV *vpack, WT_UPDATE_SELECT *upd_select)
 {
     WT_PAGE *page;
-    WT_UPDATE *first_txn_upd, *first_upd, *onpage_upd, *upd;
+    WT_UPDATE *first_txn_upd, *first_upd, *onpage_upd, *upd, *append_debug;
     size_t upd_memsize;
     bool has_newer_updates, supd_restore, upd_saved;
+
+    WT_UNUSED(append_debug);
 
     /*
      * The "saved updates" return value is used independently of returning an update we can write,
@@ -802,6 +817,8 @@ __wt_rec_upd_select(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_INSERT *ins, W
     first_txn_upd = onpage_upd = upd = NULL;
     upd_memsize = 0;
     has_newer_updates = supd_restore = upd_saved = false;
+
+    append_debug = NULL;
 
     /*
      * If called with a WT_INSERT item, use its WT_UPDATE list (which must exist), otherwise check
@@ -981,7 +998,7 @@ __wt_rec_upd_select(WT_SESSION_IMPL *session, WT_RECONCILE *r, WT_INSERT *ins, W
      */
     if (upd_select->upd != NULL && vpack != NULL && vpack->type != WT_CELL_DEL &&
       !vpack->tw.prepare && (upd_saved || F_ISSET(vpack, WT_CELL_UNPACK_OVERFLOW)))
-        WT_RET(__rec_append_orig_value(session, page, upd_select->upd, vpack));
+        WT_RET(__rec_append_orig_value(session, page, upd_select->upd, append_debug, vpack));
 
     __wt_rec_time_window_clear_obsolete(session, upd_select, NULL, r);
 
