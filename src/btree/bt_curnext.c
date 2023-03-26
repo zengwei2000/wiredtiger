@@ -386,8 +386,8 @@ restart_read:
  *     Move to the next row-store item.
  */
 static inline int
-__cursor_row_next(
-  WT_CURSOR_BTREE *cbt, bool newpage, bool restart, size_t *skippedp, bool *key_out_of_boundsp)
+__cursor_row_next(WT_CURSOR_BTREE *cbt, bool newpage, bool restart, size_t *skippedp,
+  bool *key_out_of_boundsp, bool *all_entries_del)
 {
     WT_CELL_UNPACK_KV kpack;
     WT_DECL_RET;
@@ -400,6 +400,7 @@ __cursor_row_next(
     key = &cbt->iface.key;
     page = cbt->ref->page;
     session = CUR2S(cbt);
+    *all_entries_del = true;
     *key_out_of_boundsp = false;
     *skippedp = 0;
 
@@ -432,6 +433,7 @@ __cursor_row_next(
         cbt->rip_saved = NULL;
         goto new_insert;
     }
+    *all_entries_del = false;
 
     /* Move to the next entry and return the item. */
     for (;;) {
@@ -470,6 +472,9 @@ restart_read_insert:
                 ++*skippedp;
                 continue;
             }
+
+            *all_entries_del = false;
+
             __wt_value_return(cbt, cbt->upd_value);
             return (0);
         }
@@ -527,6 +532,9 @@ restart_read_page:
             ++*skippedp;
             continue;
         }
+
+        *all_entries_del = false;
+
         __wt_value_return(cbt, cbt->upd_value);
         return (0);
     }
@@ -771,12 +779,13 @@ __wt_btcur_next(WT_CURSOR_BTREE *cbt, bool truncating)
     WT_SESSION_IMPL *session;
     size_t total_skipped, skipped;
     uint32_t flags;
-    bool key_out_of_bounds, newpage, restart, need_walk;
+    bool all_entries_del, key_out_of_bounds, newpage, restart, need_walk;
 #ifdef HAVE_DIAGNOSTIC
     bool inclusive_set;
 
     inclusive_set = false;
 #endif
+    all_entries_del = true;
     cursor = &cbt->iface;
     key_out_of_bounds = false;
     need_walk = false;
@@ -861,7 +870,8 @@ __wt_btcur_next(WT_CURSOR_BTREE *cbt, bool truncating)
                 total_skipped += skipped;
                 break;
             case WT_PAGE_ROW_LEAF:
-                ret = __cursor_row_next(cbt, newpage, restart, &skipped, &key_out_of_bounds);
+                ret = __cursor_row_next(
+                  cbt, newpage, restart, &skipped, &key_out_of_bounds, &all_entries_del);
                 total_skipped += skipped;
                 break;
             default:
@@ -901,7 +911,7 @@ __wt_btcur_next(WT_CURSOR_BTREE *cbt, bool truncating)
          */
         if (page != NULL &&
           (cbt->page_deleted_count > WT_BTREE_DELETE_THRESHOLD ||
-            (newpage && cbt->page_deleted_count > 0))) {
+            (newpage && cbt->page_deleted_count > 0) || all_entries_del)) {
             WT_ERR(__wt_page_dirty_and_evict_soon(session, cbt->ref));
             WT_STAT_CONN_INCR(session, cache_eviction_force_delete);
         }
