@@ -346,6 +346,7 @@ __wt_update_obsolete_check(
     size_t size;
     uint64_t oldest, stable;
     u_int count, upd_seen, upd_unstable;
+    char ts_string[WT_TS_INT_STRING_SIZE];
 
     next = NULL;
     page = cbt->ref->page;
@@ -365,13 +366,20 @@ __wt_update_obsolete_check(
      *
      */
     for (first = NULL, count = 0; upd != NULL; upd = upd->next, count++) {
+        if (upd != NULL) {
+            __wt_verbose_level_multi(session, WT_VERB_RECOVERY_RTS(session), WT_VERBOSE_DEBUG_3,
+                "walking update chain at update with txnid: %" PRIu64 " , durable timestamp: (%s), of type: %" PRIu8 ", with flags: %" PRIu8, upd->txnid, __wt_timestamp_to_string(upd->durable_ts, ts_string), upd->type, upd->flags);
+        }
         if (upd->txnid == WT_TXN_ABORTED)
             continue;
 
         ++upd_seen;
         if (__wt_txn_upd_visible_all(session, upd)) {
-            if (first == NULL && WT_UPDATE_DATA_VALUE(upd))
+            if (first == NULL && WT_UPDATE_DATA_VALUE(upd)){
                 first = upd;
+                __wt_verbose_level_multi(session, WT_VERB_RECOVERY_RTS(session), WT_VERBOSE_DEBUG_3,
+                    "found globally visible update with txnid: %" PRIu64 ", durable timestamp: (%s), of type: %" PRIu8 ", with flags: %" PRIu8, upd->txnid, __wt_timestamp_to_string(upd->durable_ts, ts_string), upd->type, upd->flags);
+            }
         } else {
             first = NULL;
             /*
@@ -386,6 +394,9 @@ __wt_update_obsolete_check(
         if (F_ISSET(upd, WT_UPDATE_TO_DELETE_FROM_HS))
             first = NULL;
     }
+
+    __wt_verbose_level_multi(session, WT_VERB_RECOVERY_RTS(session), WT_VERBOSE_DEBUG_3,
+        "finished walking update chain, upd_seen: %u, upd_unstable: %u", upd_seen, upd_unstable);
 
     /*
      * We cannot discard this WT_UPDATE structure, we can only discard WT_UPDATE structures

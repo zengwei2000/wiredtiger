@@ -224,6 +224,7 @@ __wt_update_serial(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_PAGE *page
     WT_UPDATE *obsolete, *upd;
     wt_timestamp_t obsolete_timestamp, prev_upd_ts;
     uint64_t txn;
+    char ts_string[WT_TS_INT_STRING_SIZE];
 
     /* Clear references to memory we now own and must free on error. */
     upd = *updp;
@@ -303,7 +304,17 @@ __wt_update_serial(WT_SESSION_IMPL *session, WT_CURSOR_BTREE *cbt, WT_PAGE *page
     if (WT_PAGE_TRYLOCK(session, page) != 0)
         return (0);
 
+    if (upd != NULL) {
+        __wt_verbose_level_multi(session, WT_VERB_RECOVERY_RTS(session), WT_VERBOSE_DEBUG_3,
+            "checking for obselete updates after update with txnid: %" PRIu64 " , durable timestamp: (%s), of type: %" PRIu8 ", with flags: %" PRIu8, upd->txnid, __wt_timestamp_to_string(upd->durable_ts, ts_string), upd->type, upd->flags);
+    }
+
     obsolete = __wt_update_obsolete_check(session, cbt, upd->next, true);
+
+    // WT-10522 print obselete updates here.
+    if (obsolete != NULL)
+        __wt_verbose_level_multi(session, WT_VERB_RECOVERY_RTS(session), WT_VERBOSE_DEBUG_3,
+            "obselete update with txnid: %" PRIu64 " , durable timestamp: (%s), of type: %" PRIu8 , obsolete->txnid, __wt_timestamp_to_string(obsolete->durable_ts, ts_string), obsolete->type);
 
     WT_PAGE_UNLOCK(session, page);
 

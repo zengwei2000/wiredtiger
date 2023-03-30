@@ -17,6 +17,8 @@ static int
 __rts_btree_abort_update(WT_SESSION_IMPL *session, WT_ITEM *key, WT_UPDATE *first_upd,
   wt_timestamp_t rollback_timestamp, bool *stable_update_found)
 {
+    WT_DECL_ITEM(key_string);
+    WT_DECL_RET;
     WT_UPDATE *stable_upd, *tombstone, *upd;
     char ts_string[2][WT_TS_INT_STRING_SIZE];
     bool dryrun;
@@ -28,6 +30,14 @@ __rts_btree_abort_update(WT_SESSION_IMPL *session, WT_ITEM *key, WT_UPDATE *firs
     txn_id_visible = false;
     if (stable_update_found != NULL)
         *stable_update_found = false;
+
+    // WT-10522 Print the key.
+    WT_ERR(__wt_scr_alloc(session, 0, &key_string));
+    __wt_verbose_level_multi(session, WT_VERB_RECOVERY_RTS(session), WT_VERBOSE_DEBUG_3,
+    "aborting update on key: %s",
+    __wt_key_string(session, key->data, key->size, S2BT(session)->key_format, key_string));
+    __wt_scr_free(session, &key_string);
+
     for (upd = first_upd; upd != NULL; upd = upd->next) {
         /* Skip the updates that are aborted. */
         if (upd->txnid == WT_TXN_ABORTED)
@@ -63,6 +73,9 @@ __rts_btree_abort_update(WT_SESSION_IMPL *session, WT_ITEM *key, WT_UPDATE *firs
         } else {
             /* Valid update is found. */
             stable_upd = upd;
+            // Found stable update. Print it. WT-10522
+            __wt_verbose_level_multi(session, WT_VERB_RECOVERY_RTS(session), WT_VERBOSE_DEBUG_3,
+              "found stable update with txnid: %" PRIu64 " , durable timestamp: (%s), of type: %" PRIu8 , upd->txnid, __wt_timestamp_to_string(upd->durable_ts, ts_string[0]), upd->type);
             break;
         }
     }
@@ -111,7 +124,7 @@ __rts_btree_abort_update(WT_SESSION_IMPL *session, WT_ITEM *key, WT_UPDATE *firs
         if (stable_update_found != NULL)
             *stable_update_found = true;
     }
-
+err:
     return (0);
 }
 
