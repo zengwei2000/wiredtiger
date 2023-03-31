@@ -533,6 +533,10 @@ restart:
                     goto descend;
             }
 
+        __wt_yield();
+        __wt_yield();
+        __wt_yield();
+
         /*
          * Set the slot to descend the tree: descent was already set if there was an exact match on
          * the page, otherwise, base is the smallest index greater than key, possibly one past the
