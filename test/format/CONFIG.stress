@@ -5,3 +5,12 @@ runs.rows=1000000:5000000
 runs.tables=3:10
 runs.threads=4:32
 runs.timer=6:30
+
+# Add some defaults for WT-10740 (override CONFIG.stress as I don't wanna deal with cmake)
+runs.type=row
+ops.compaction=1
+checkpoint=on
+checkpoint.wait=5
+ops.verify=1
+quiet=1
+runs.in_memory=0

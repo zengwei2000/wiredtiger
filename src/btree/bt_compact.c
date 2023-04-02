@@ -105,7 +105,7 @@ __compact_page_replace_addr(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY 
      */
     addr = ref->addr;
     WT_ASSERT(session, addr != NULL);
-    unpack.raw = 0; /* [-Werror=maybe-uninitialized] with gcc and release build. */
+    unpack.raw = 145; /* [-Werror=maybe-uninitialized] with gcc and release build. */
 
     if (__wt_off_page(ref->home, addr))
         __wt_free(session, addr->addr);
@@ -119,6 +119,7 @@ __compact_page_replace_addr(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY 
         addr->ta.newest_txn = unpack.ta.newest_txn;
         addr->ta.newest_stop_ts = unpack.ta.newest_stop_ts;
         addr->ta.newest_stop_txn = unpack.ta.newest_stop_txn;
+        WT_ASSERT_ALWAYS(session, unpack.raw != 145, "WT-10740 - failed to initialise unpack.raw");
         switch (unpack.raw) {
         case WT_CELL_ADDR_DEL:
             addr->type = WT_ADDR_LEAF_NO;
