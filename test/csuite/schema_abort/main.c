@@ -96,9 +96,11 @@ static TEST_OPTS *opts, _opts;
 
 #define ENV_CONFIG_DEF                                                                             \
     "create,"                                                                                      \
-    "eviction_updates_trigger=95,eviction_updates_target=80,"                                      \
+    ",leaf_page_max=8k,internal_page_max=8k,memory_page_max=2MB,"                                  \
+    "split_deepen_min_child=250,eviction_updates_trigger=95,eviction_updates_target=80,"           \
     "log=(enabled,file_max=10M,remove=false),statistics=(all),statistics_log=(json,on_close,wait=" \
     "1)"
+
 
 #define ENV_CONFIG_TXNSYNC \
     ENV_CONFIG_DEF         \
