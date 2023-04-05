@@ -995,6 +995,18 @@ variables:
         vars:
           format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360
 
+  - &format-stress-test-nonstandalone-wt-10017
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+          <<: *configure_flags_with_builtins
+          NONSTANDALONE: -DWT_STANDALONE_BUILD=0
+      - func: "format test script"
+        vars:
+          format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -c ../../../test/format/failure_configs/CONFIG.WT-10017 -t 360
+
   - &format-stress-sanitizer-ppc-test
     exec_timeout_secs: 25200
     commands:
@@ -3884,6 +3896,36 @@ tasks:
   - <<: *format-stress-test-nonstandalone
     name: format-stress-test-1-nonstandalone
     tags: ["stress-test-1-nonstandalone"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-2
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-3
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-4
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-5
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-6
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-7
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-8
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-9
+    tags: ["stress-test-wt-10017"]
+  - <<: *format-stress-test-nonstandalone-wt-10017
+    name: stress-test-wt-10017-10
+    tags: ["stress-test-wt-10017"]
   - <<: *format-stress-test-nonstandalone
     name: format-stress-test-2-nonstandalone
     tags: ["stress-test-2-nonstandalone"]
@@ -5348,6 +5390,7 @@ buildvariants:
     - name: ".stress-test-2"
     - name: ".stress-test-3"
     - name: ".stress-test-4"
+    - name: ".stress-test-wt-10017"
     - name: ".stress-test-no-barrier"
     - name: format-abort-recovery-stress-test
     - name: ".stress-test-1-nonstandalone"
