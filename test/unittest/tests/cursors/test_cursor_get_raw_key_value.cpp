@@ -6,7 +6,9 @@
  * See the file LICENSE for redistribution information.
  */
 
+#include <thread>
 #include <catch2/catch.hpp>
+#include <iostream>
 #include "wiredtiger.h"
 #include "wt_internal.h"
 #include "../utils.h"
@@ -81,6 +83,17 @@ require_get_raw_key_value(WT_CURSOR *cursor, const char *expected_key, const cha
     return keys_match && values_match;
 }
 
+
+void insert_sample_values(WT_CURSOR *cursor)
+{
+    REQUIRE(insert_key_value(cursor, "key1", "value1") == 0);
+    REQUIRE(insert_key_value(cursor, "key2", "value2") == 0);
+    REQUIRE(insert_key_value(cursor, "key3", "value3") == 0);
+    REQUIRE(insert_key_value(cursor, "key4", "value4") == 0);
+    REQUIRE(insert_key_value(cursor, "key5", "value5") == 0);
+}
+
+
 TEST_CASE("Cursor: get key and value()", "[cursor]")
 {
     ConnectionWrapper conn(DB_HOME);
@@ -95,12 +108,7 @@ TEST_CASE("Cursor: get key and value()", "[cursor]")
     WT_CURSOR *cursor = nullptr;
     REQUIRE(session->open_cursor(session, uri.c_str(), nullptr, nullptr, &cursor) == 0);
 
-    // Insert some values
-    REQUIRE(insert_key_value(cursor, "key1", "value1") == 0);
-    REQUIRE(insert_key_value(cursor, "key2", "value2") == 0);
-    REQUIRE(insert_key_value(cursor, "key3", "value3") == 0);
-    REQUIRE(insert_key_value(cursor, "key4", "value4") == 0);
-    REQUIRE(insert_key_value(cursor, "key5", "value5") == 0);
+    insert_sample_values(cursor);
 
     SECTION("Check the values using get_key() and get_value()")
     {
@@ -156,4 +164,92 @@ TEST_CASE("Cursor: get key and value()", "[cursor]")
     REQUIRE(cursor->close(cursor) == 0);
 
     REQUIRE(session->close(session, nullptr) == 0);
+}
+
+
+void thread_function_commit(WT_SESSION *session)
+{
+    session->checkpoint(session, "name=ckpt10");
+}
+
+
+void thread_function_drop(WT_SESSION *session, std::string const& uri)
+{
+    session->drop(session, uri.c_str(), "force=true");
+}
+
+
+void cursor_test(std::string const &config, bool close) {
+    ConnectionWrapper conn(DB_HOME);
+    WT_SESSION_IMPL *session_impl = conn.createSession();
+    std::string uri = "table:cursor_test";
+
+    WT_SESSION *session = &session_impl->iface;
+
+    REQUIRE(session->create(session, uri.c_str(), "key_format=S,value_format=S") == 0);
+    REQUIRE(session->begin_transaction(session, "") == 0);
+
+    WT_CURSOR *cursor = nullptr;
+    REQUIRE(session->open_cursor(session, uri.c_str(), nullptr, config.c_str(), &cursor) == 0);
+
+    insert_sample_values(cursor);
+
+    SECTION("Checkpoint during transaction then commit: config = " + config)
+    {
+        int result = session->checkpoint(session, "name=ckpt3");
+        REQUIRE(result == EINVAL);
+
+        if (close) {
+            REQUIRE(cursor->close(cursor) == 0);
+            REQUIRE(session->commit_transaction(session, "") == EINVAL);
+        } else {
+            REQUIRE(session->commit_transaction(session, "") == 0);
+        }
+    }
+
+    SECTION("Checkpoint in 2nd thread during transaction then commit: config = " + config)
+    {
+        std::thread thread([&]() { thread_function_commit(session); } );
+        thread.join();
+
+        if (close) {
+            REQUIRE(cursor->close(cursor) == 0);
+            REQUIRE(session->commit_transaction(session, "") == EINVAL);
+        } else {
+            REQUIRE(session->commit_transaction(session, "") == 0);
+        }
+    }
+
+    SECTION("Drop in 2nd thread during transaction then commit: config = " + config)
+    {
+        std::thread thread([&]() { thread_function_drop(session, uri); } );
+        thread.join();
+
+        if (close) {
+            REQUIRE(cursor->close(cursor) == 0);
+            REQUIRE(session->commit_transaction(session, "") == EINVAL);
+        } else {
+            REQUIRE(session->commit_transaction(session, "") == 0);
+        }
+    }
+
+
+    SECTION("Checkpoint in 2nd thread during transaction then rollback: config = " + config)
+    {
+        std::thread thread([&]() { thread_function_commit(session); } );
+        thread.join();
+
+        if (close) {
+            REQUIRE(cursor->close(cursor) == 0);
+        }
+
+        REQUIRE(session->rollback_transaction(session, "") == 0);
+    }
+}
+
+
+TEST_CASE("Cursor: checkpoint during transaction()", "[cursor]")
+{
+    cursor_test("", true);
+    cursor_test("bulk", false);
 }
