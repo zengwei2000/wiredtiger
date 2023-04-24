@@ -931,9 +931,29 @@ ContextInternal::create_all(WT_CONNECTION *conn)
         THROW("Error extracting dynamic set of tables from the metadata.");
     }
 
-    if ((ret = cursor->close(cursor)) != 0) {
-        THROW("Cursor close failed.");
+    /* Make sure each base has its mirror and vice-versa. */
+    std::vector<tint_t> to_delete;
+    for (const auto &kv : _dyn_table_names) {
+        tint_t id = kv.first;
+        if (_dyn_table_runtime[id].has_mirror() &&
+          _dyn_tint.count(_dyn_table_runtime[id]._mirror) == 0) {
+            to_delete.push_back(id);
+        }
     }
+
+    /* Delete the leftover. */
+    for (const auto &id : to_delete) {
+        const std::string uri(_dyn_table_names[id]);
+        _dyn_tint.erase(uri);
+        _dyn_table_names.erase(id);
+        _dyn_table_runtime.erase(id);
+        while ((ret = session->drop(session, uri.c_str(), "checkpoint_wait=false")) == EBUSY) {
+            sleep(1);
+        }
+        if (ret != 0)
+            THROW("Table drop failed for '" << uri << "' in create_all.");
+    }
+
     if ((ret = session->close(session, NULL)) != 0) {
         THROW("Session close failed.");
     }
@@ -1685,10 +1705,11 @@ ThreadRunner::op_run(Operation *op)
         cursor = _cursors[tint];
     }
 
-    measure_latency = track != nullptr &&
-      (track->ops != 0 && track->track_latency() &&
-          (track->ops % _workload->options.sample_rate == 0) ||
-        op->_optype == Operation::OP_RTS || op->_optype == Operation::OP_CHECKPOINT);
+    // Don't skip measuring the first checkpoint or RTS.
+    measure_latency = track != nullptr && track->track_latency() &&
+      (track->ops % _workload->options.sample_rate == 0) &&
+      (track->ops != 0 || op->_optype == Operation::OP_RTS ||
+        op->_optype == Operation::OP_CHECKPOINT);
 
     uint64_t start;
     if (measure_latency)
