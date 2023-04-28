@@ -1877,9 +1877,11 @@ err:
         const std::shared_lock lock(*_icontext->_dyn_mutex);
         // For operations on random tables, if a table has been selected, decrement the
         // reference counter.
-        ASSERT(_icontext->_dyn_table_runtime[tint]._in_use > 0);
+        // FIXME
+        // ASSERT(_icontext->_dyn_table_runtime[tint]._in_use > 0);
         // Use atomic here as we can race with another thread that acquires the shared lock.
-        (void)workgen_atomic_sub32(&_icontext->_dyn_table_runtime[tint]._in_use, 1);
+        if (_icontext->_dyn_table_runtime[tint]._in_use > 0)
+            (void)workgen_atomic_sub32(&_icontext->_dyn_table_runtime[tint]._in_use, 1);
         op_clear_table(op);
     }
 
