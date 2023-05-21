@@ -902,6 +902,26 @@ struct __wt_page_deleted {
     bool selected_for_write;
 };
 
+#define WT_REF_DISK 0    /* Page is on disk */
+#define WT_REF_DELETED 1 /* Page is on disk, but deleted */
+#define WT_REF_LOCKED 2  /* Page locked for exclusive access */
+#define WT_REF_MEM 3     /* Page is in cache and valid */
+#define WT_REF_SPLIT 4   /* Parent page split (WT_REF dead) */
+typedef uint8_t __wt_ref_state;
+
+/*
+ * Define both internal- and leaf-page flags for now: we only need one, but it provides an easy way
+ * to assert a page-type flag is always set (we allocate WT_REFs in lots of places and it's easy to
+ * miss one). If we run out of bits in the flags field, remove the internal flag and rewrite tests
+ * depending on it to be "!leaf" instead.
+ */
+/* AUTOMATIC FLAG VALUE GENERATION START 0 */
+#define WT_REF_FLAG_INTERNAL 0x1u /* Page is an internal page */
+#define WT_REF_FLAG_LEAF 0x2u     /* Page is a leaf page */
+#define WT_REF_FLAG_READING 0x4u  /* Page is being read in */
+                                  /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+typedef uint8_t __wt_ref_flags;
+
 /*
  * WT_REF_HIST --
  *	State information of a ref at a single point in time.
@@ -912,7 +932,7 @@ struct __wt_ref_hist {
     const char *func;
     uint32_t time_sec;
     uint16_t line;
-    uint16_t state;
+    __wt_ref_state state;
 };
 
 /*
@@ -931,25 +951,9 @@ struct __wt_ref {
 
     uint8_t unused[2]; /* Padding: before the flags field so flags can be easily expanded. */
 
-/*
- * Define both internal- and leaf-page flags for now: we only need one, but it provides an easy way
- * to assert a page-type flag is always set (we allocate WT_REFs in lots of places and it's easy to
- * miss one). If we run out of bits in the flags field, remove the internal flag and rewrite tests
- * depending on it to be "!leaf" instead.
- */
-/* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_REF_FLAG_INTERNAL 0x1u /* Page is an internal page */
-#define WT_REF_FLAG_LEAF 0x2u     /* Page is a leaf page */
-#define WT_REF_FLAG_READING 0x4u  /* Page is being read in */
-                                  /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
-    uint8_t flags;
+    __wt_ref_flags flags;
 
-#define WT_REF_DISK 0       /* Page is on disk */
-#define WT_REF_DELETED 1    /* Page is on disk, but deleted */
-#define WT_REF_LOCKED 2     /* Page locked for exclusive access */
-#define WT_REF_MEM 3        /* Page is in cache and valid */
-#define WT_REF_SPLIT 4      /* Parent page split (WT_REF dead) */
-    volatile uint8_t state; /* Page state */
+    volatile __wt_ref_state state; /* Page state */
 
     /*
      * Address: on-page cell if read from backing block, off-page WT_ADDR if instantiated in-memory,
