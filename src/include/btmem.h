@@ -805,6 +805,7 @@ struct __wt_page {
 #define WT_PREPARE_INPROGRESS 1
 #define WT_PREPARE_LOCKED 2
 #define WT_PREPARE_RESOLVED 3
+typedef uint8_t __wt_prepare_state;
 
 /*
  * Page state.
@@ -1257,6 +1258,24 @@ struct __wt_ikey {
 #define WT_IKEY_DATA(ikey) ((void *)((uint8_t *)(ikey) + sizeof(WT_IKEY)))
 };
 
+/* AUTOMATIC FLAG VALUE GENERATION START 0 */
+#define WT_UPDATE_DS 0x01u                       /* Update has been written to the data store. */
+#define WT_UPDATE_HS 0x02u                       /* Update has been written to history store. */
+#define WT_UPDATE_PREPARE_RESTORED_FROM_DS 0x04u /* Prepared update restored from data store. */
+#define WT_UPDATE_RESTORED_FAST_TRUNCATE 0x08u   /* Fast truncate instantiation */
+#define WT_UPDATE_RESTORED_FROM_DS 0x10u         /* Update restored from data store. */
+#define WT_UPDATE_RESTORED_FROM_HS 0x20u         /* Update restored from history store. */
+#define WT_UPDATE_TO_DELETE_FROM_HS 0x40u        /* Update needs to be deleted from history store */
+                                                 /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+typedef uint8_t __wt_update_flags;
+
+#define WT_UPDATE_INVALID 0   /* diagnostic check */
+#define WT_UPDATE_MODIFY 1    /* partial-update modify value */
+#define WT_UPDATE_RESERVE 2   /* reserved */
+#define WT_UPDATE_STANDARD 3  /* complete value */
+#define WT_UPDATE_TOMBSTONE 4 /* deleted */
+typedef uint8_t __wt_update_type;
+
 /*
  * WT_UPDATE --
  *
@@ -1290,12 +1309,7 @@ struct __wt_update {
 
     uint32_t size; /* data length */
 
-#define WT_UPDATE_INVALID 0   /* diagnostic check */
-#define WT_UPDATE_MODIFY 1    /* partial-update modify value */
-#define WT_UPDATE_RESERVE 2   /* reserved */
-#define WT_UPDATE_STANDARD 3  /* complete value */
-#define WT_UPDATE_TOMBSTONE 4 /* deleted */
-    uint8_t type;             /* type (one byte to conserve memory) */
+    __wt_update_type type; /* type (one byte to conserve memory) */
 
 /* If the update includes a complete value. */
 #define WT_UPDATE_DATA_VALUE(upd) \
@@ -1305,18 +1319,9 @@ struct __wt_update {
      * The update state is used for transaction prepare to manage visibility and transitioning
      * update structure state safely.
      */
-    volatile uint8_t prepare_state; /* prepare state */
+    volatile __wt_prepare_state prepare_state; /* prepare state */
 
-/* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_UPDATE_DS 0x01u                       /* Update has been written to the data store. */
-#define WT_UPDATE_HS 0x02u                       /* Update has been written to history store. */
-#define WT_UPDATE_PREPARE_RESTORED_FROM_DS 0x04u /* Prepared update restored from data store. */
-#define WT_UPDATE_RESTORED_FAST_TRUNCATE 0x08u   /* Fast truncate instantiation */
-#define WT_UPDATE_RESTORED_FROM_DS 0x10u         /* Update restored from data store. */
-#define WT_UPDATE_RESTORED_FROM_HS 0x20u         /* Update restored from history store. */
-#define WT_UPDATE_TO_DELETE_FROM_HS 0x40u        /* Update needs to be deleted from history store */
-                                                 /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
-    uint8_t flags;
+    __wt_update_flags flags;
 
     /*
      * Zero or more bytes of value (the payload) immediately follows the WT_UPDATE structure. We use
@@ -1624,6 +1629,12 @@ struct __wt_col_fix_auxiliary_header {
     }                                                    \
     while (0)
 
+/* AUTOMATIC FLAG VALUE GENERATION START 0 */
+#define WT_VRFY_DISK_CONTINUE_ON_FAILURE 0x1u
+#define WT_VRFY_DISK_EMPTY_PAGE_OK 0x2u
+/* AUTOMATIC FLAG VALUE GENERATION STOP 32 */
+typedef uint32_t __wt_verify_flags;
+
 /*
  * WT_VERIFY_INFO -- A structure to hold all the information related to a verify operation.
  */
@@ -1637,9 +1648,5 @@ struct __wt_verify_info {
     uint32_t cell_num; /* The current cell offset being verified */
     uint64_t recno;    /* The current record number in a column store page */
 
-/* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_VRFY_DISK_CONTINUE_ON_FAILURE 0x1u
-#define WT_VRFY_DISK_EMPTY_PAGE_OK 0x2u
-    /* AUTOMATIC FLAG VALUE GENERATION STOP 32 */
-    uint32_t flags;
+    __wt_verify_flags flags;
 };
