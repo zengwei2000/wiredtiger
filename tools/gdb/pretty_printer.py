@@ -1,9 +1,34 @@
-# Pretty printers for WiredTiger types. WiredTiger uses #defines for enums and 
-# bitflag fields which are printed as plain integers in gdb.
-# These pretty printers will fetch all preprocessor macro definitions and map 
-# them from their values to their definitions. For example mapping WT_REF_LOCKED to the number 2.
+# gdb pretty printer for WiredTiger types that are populated by #define constants. For example:
+#   #define WT_REF_FLAG_INTERNAL 0x1u /* Page is an internal page */
+#   #define WT_REF_FLAG_LEAF 0x2u     /* Page is a leaf page */
+#   #define WT_REF_FLAG_READING 0x4u  /* Page is being read in */
+#                                     /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+#   typedef uint8_t __wt_ref_flags;
+# 
+# These #defines make for easier reading of source code, however they get converted to raw 
+# magic numbers at compile time which makes debugging harder. This script will find the mapping 
+# between the raw integers and their #defines name, then report this alongside the value 
+# when the type is printed in gdb. Changing
+#   (gdb) p *ref
+#   $1 = {
+#   ...
+#   flags = 6 '\006', 
+#   state = 2 '\002', 
+# to
+#   (gdb) p *ref
+#   $2 = {
+#   ...
+#   flags = 0x6 (WT_REF_FLAG_READING | WT_REF_FLAG_LEAF), 
+#   state = 2 (WT_REF_LOCKED), 
+#  
+# Note this depends on a few things:
+# - The WiredTiger sharedlibrary must be loaded in gdb at the time we call this script.
+# - WiredTiger must have been compiled with macro information enabled. This requires -g3 or -ggdb3
+# - Types must be of the form listed above: A typedef for a __wt_* type that is directly preceded by a list of #defines
+# - The #defines must be contiguous. A gap between #defines of more than one line will stop loading definitions
 #
-# To use this script source it from inside gdb
+# To use this script load it inside gdb:
+#     source wiredtiger/tools/gdb/pretty_printer.py
 
 import gdb
 import re
@@ -48,8 +73,7 @@ def macros_for_typedef(type_name: str):
     """
     Given the name of a __wt_* typedef return associated macro definitions. 
     e.g. macros_for_typedef("__wt_ref_flags")
-         {4: 'WT_REF_FLAG_READING', 2: 'WT_REF_FLAG_LEAF', 1: 'WT_REF_FLAG_INTERNAL'}
-
+         {'0x04': 'WT_REF_FLAG_READING', '0x02': 'WT_REF_FLAG_LEAF', '0x01': 'WT_REF_FLAG_INTERNAL'}
     """
     info_macros = gdb.execute("info macros main", to_string=True)
     macro_locations = get_wt_defines_and_locations(info_macros)
@@ -101,15 +125,8 @@ def wtMacroFieldPrinter(td_name: str):
                 else:
                     return f"{v} ({macros_used[str(v)]})"
             except Exception as e:
-                # If this fails fall back on printing the normal value
-                # This can break in a few ways, but most likely we can't find macro 
-                # definitions directly preceding the typedef line.
-                # e.g.
-                #   #define WT_REF_FLAG_INTERNAL 0x1u /* Page is an internal page */
-                #   #define WT_REF_FLAG_LEAF 0x2u     /* Page is a leaf page */
-                #   #define WT_REF_FLAG_READING 0x4u  /* Page is being read in */
-                #                                     /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
-                #   typedef uint8_t __wt_ref_flags;
+                # If this fails fall back on printing the normal value. Please see the comment at the 
+                # top of the file (in particular the contiguous requirement) for requirements that must be met.
                 return f"{v} (Failed to load pretty print details for {self.typedef_name})"
     return wtMacroFieldPrinter
 
@@ -123,10 +140,9 @@ def wiredtiger_pretty_printers():
     macro_locations = get_wt_defines_and_locations(info_macros)
 
     if len(macro_locations) == 0:
-        # Unless we've compiled with -ggdb3 we won't have macro definitions and 
-        # can't build the pretty print information
-        # TODO - How to handle if we load this script before we've loaded the shared-library
-        print("No macro definitions loaded in gdb. Not loading pretty printers")
+        # If we won't have macro definitions we can't build pretty print information
+        print("Can't find macro definitions for WiredTiger. The WiredTiger sharedlibrary "
+              "may not be loaded yet, or not compiled with -ggdb3")
         return printers
 
     types_info = gdb.execute(f"info types __wt_", to_string=True)
@@ -143,5 +159,6 @@ def wiredtiger_pretty_printers():
 
     return printers
 
-# Register our pretty printers with gdb
-gdb.printing.register_pretty_printer(None, wiredtiger_pretty_printers(), replace=True)
+if __name__ == '__main__':
+    # Register our pretty printers with gdb
+    gdb.printing.register_pretty_printer(None, wiredtiger_pretty_printers(), replace=True)
