@@ -1922,6 +1922,7 @@ extern void __wt_rec_col_fix_write_auxheader(WT_SESSION_IMPL *session, uint32_t 
 extern void __wt_rec_dictionary_free(WT_SESSION_IMPL *session, WT_RECONCILE *r);
 extern void __wt_rec_dictionary_reset(WT_RECONCILE *r);
 extern void __wt_ref_addr_free(WT_SESSION_IMPL *session, WT_REF *ref);
+extern void __wt_ref_addr_free_copy(WT_SESSION_IMPL *session, WT_REF *ref);
 extern void __wt_ref_out(WT_SESSION_IMPL *session, WT_REF *ref);
 extern void __wt_rollback_to_stable_init(WT_CONNECTION_IMPL *conn);
 extern void __wt_root_ref_init(
@@ -2077,6 +2078,8 @@ static inline bool __wt_rec_need_split(WT_RECONCILE *r, size_t len)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 static inline bool __wt_ref_addr_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *copy)
   WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
+static inline bool __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref,
+  WT_ADDR_COPY *copy) WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 static inline bool __wt_ref_cas_state_int(WT_SESSION_IMPL *session, WT_REF *ref, uint8_t old_state,
   uint8_t new_state, const char *func, int line) WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));
 static inline bool __wt_ref_is_root(WT_REF *ref) WT_GCC_FUNC_DECL_ATTRIBUTE((warn_unused_result));

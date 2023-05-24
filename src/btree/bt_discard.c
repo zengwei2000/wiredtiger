@@ -286,6 +286,57 @@ __wt_ref_addr_free(WT_SESSION_IMPL *session, WT_REF *ref)
 }
 
 /*
+ * __wt_ref_addr_free_copy --
+ *     Free the address in a reference, if necessary.
+ */
+void
+__wt_ref_addr_free_copy(WT_SESSION_IMPL *session, WT_REF *ref)
+{
+    WT_PAGE *home;
+    void *ref_addr;
+
+    /*
+     * In order to free the WT_REF.addr field we need to read and clear the address without a race.
+     * The WT_REF may be a child of a page being split, in which case the addr field could be
+     * instantiated concurrently which changes the addr field. Once we swap in NULL we effectively
+     * own the addr. Then provided the addr is off page we can free the memory.
+     *
+     * However as we could be the child of a page being split the ref->home pointer which tells us
+     * whether the addr is on or off page could change concurrently. To avoid this we save the home
+     * pointer before we do the compare and swap. While the second ordered read should be sufficient
+     * we use an ordered read on the ref->home pointer as that is the standard mechanism to
+     * guarantee we read the current value.
+     *
+     * We don't reread this value inside loop as if it was to change then we would be pointing at a
+     * new parent, which would mean that our ref->addr must have been instantiated and thus we are
+     * safe to free it at the end of this function.
+     */
+    WT_ORDERED_READ(home, ref->home);
+    do {
+        WT_ORDERED_READ(ref_addr, ref->addr);
+        if (ref_addr == NULL)
+            return;
+    } while (!__wt_atomic_cas_ptr(&ref->addr, ref_addr, NULL));
+
+    if (home == NULL || __wt_off_page(home, ref_addr)) {
+        __wt_free(session, ((WT_ADDR *)ref_addr)->addr);
+        __wt_free(session, ref_addr);
+    }
+
+    /* WT-11062 race attempt
+     * Signal to ref_addr_copy_copy that we've freed the ref. Don't move forward in case this thread
+     * ends up populating ref->addr with new (copy-able) data
+     */
+    if (F_ISSET(ref, WT_REF_FLAG_WT11062_TRY_RACE)) {
+        F_SET(ref, WT_REF_FLAG_WT11062_REF_FREED);
+        while (F_ISSET(ref, WT_REF_FLAG_WT11062_TRY_RACE)) {
+            __wt_yield();
+        }
+        F_CLR(ref, WT_REF_FLAG_WT11062_REF_FREED);
+    }
+}
+
+/*
  * __wt_free_ref --
  *     Discard the contents of a WT_REF structure (optionally including the pages it references).
  */

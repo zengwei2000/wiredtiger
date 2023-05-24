@@ -1590,6 +1590,133 @@ __wt_ref_addr_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *copy)
 }
 
 /*
+ * __wt_ref_addr_copy_copy --
+ *     A copy of ref_addr_copy only called by __wt_btcur_skip_page. Adds a section which attempts to
+ *     force the proposed race in WT-11062 where a page gets dirtied and reconciled between us
+ *     entering this function and attempting to memcpy addr->addr.
+ */
+static inline bool
+__wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *copy)
+{
+    WT_ADDR *addr;
+    WT_CELL_UNPACK_ADDR *unpack, _unpack;
+    WT_PAGE *page;
+    int i;
+
+    unpack = &_unpack;
+    page = ref->home;
+    copy->del_set = false;
+
+    /*
+     * To look at an on-page cell, we need to look at the parent page's disk image, and that can be
+     * dangerous. The problem is if the parent page splits, deepening the tree. As part of that
+     * process, the WT_REF WT_ADDRs pointing into the parent's disk image are copied into off-page
+     * WT_ADDRs and swapped into place. The content of the two WT_ADDRs are identical, and we don't
+     * care which version we get as long as we don't mix-and-match the two.
+     */
+    WT_ORDERED_READ(addr, (WT_ADDR *)ref->addr);
+
+    /* If NULL, there is no information. */
+    if (addr == NULL)
+        return (false);
+
+    /* WT-11062 race start ===================================== */
+    i = 0;
+    __wt_errx(session, "ref->page = %p", ref->page);
+    if (ref->page != NULL) {
+        __wt_errx(session, "page->modify = %p", ref->page->modify);
+        if (ref->page->modify != NULL) {
+            __wt_errx(session, "rec_result = %d", ref->page->modify->rec_result);
+        }
+    }
+
+    if (ref->page != NULL && ref->page->modify != NULL && ref->page->modify->rec_result == 0 &&
+      __wt_random(&session->rnd) % 100 == 0) {
+        __wt_errx(session, "Trying race");
+
+        /*
+         * The page needs to be fresh in-mem to hit the correct path in rec_write_wrapup. No prior
+         * reconciliations Only run this once every 100 calls. We'll wait for longer on a subset of
+         * pages and increase the time window for the issue to fire
+         */
+        F_SET(ref, WT_REF_FLAG_WT11062_TRY_RACE);
+
+        /* Wait for the page to get dirtied */
+        while (ref->page->modify->page_state != WT_PAGE_DIRTY) {
+            /* Give up after 5 second so we don't deadlock. Consistently poll every 1ms in case we
+             * miss the dirtied page before it's cleaned. */
+            usleep(1000);
+            if (i++ == 5000) {
+                goto give_up_race;
+            }
+        }
+
+        /* Wait for the addr to get freed */
+        __wt_errx(session,
+          "WT-11062 - Detected a page that has been dirtied during ref_addr_copy! Waiting for it "
+          "to be reconciled.");
+          F_SET(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
+        while (!F_ISSET(ref, WT_REF_FLAG_WT11062_REF_FREED)) {
+            __wt_yield();
+        }
+
+        /* Make sure ref->home hasn't changed, that could be a separate issue */
+        if (ref->home == page) {
+            __wt_errx(session, "WT-11062 - Attempting to hit segfault from memcpy");
+            memcpy(copy->addr, addr->addr, copy->size = addr->size);
+        } else {
+            __wt_errx(session, "WT-11062 - ref->home changed. dropping race attempt");
+        }
+        F_CLR(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
+
+give_up_race:
+        /*__wt_errx(session, "give up race");*/
+        F_CLR(ref, WT_REF_FLAG_WT11062_TRY_RACE);
+    }
+    /* WT-11062 race end ===================================== */
+
+    /* If off-page, the pointer references a WT_ADDR structure. */
+    if (__wt_off_page(page, addr)) {
+        WT_TIME_AGGREGATE_COPY(&copy->ta, &addr->ta);
+        copy->type = addr->type;
+        memcpy(copy->addr, addr->addr, copy->size = addr->size);
+        return (true);
+    }
+
+    /* If on-page, the pointer references a cell. */
+    __wt_cell_unpack_addr(session, page->dsk, (WT_CELL *)addr, unpack);
+    WT_TIME_AGGREGATE_COPY(&copy->ta, &unpack->ta);
+
+    switch (unpack->raw) {
+    case WT_CELL_ADDR_INT:
+        copy->type = WT_ADDR_INT;
+        break;
+    case WT_CELL_ADDR_LEAF:
+        copy->type = WT_ADDR_LEAF;
+        break;
+    case WT_CELL_ADDR_DEL:
+        /* Copy out any fast-truncate information. */
+        copy->del_set = true;
+        if (F_ISSET(page->dsk, WT_PAGE_FT_UPDATE))
+            copy->del = unpack->page_del;
+        else {
+            /* It's a legacy page; create default delete information. */
+            copy->del.txnid = WT_TXN_NONE;
+            copy->del.timestamp = copy->del.durable_timestamp = WT_TS_NONE;
+            copy->del.prepare_state = 0;
+            copy->del.previous_ref_state = WT_REF_DISK;
+            copy->del.committed = true;
+        }
+        /* FALLTHROUGH */
+    case WT_CELL_ADDR_LEAF_NO:
+        copy->type = WT_ADDR_LEAF_NO;
+        break;
+    }
+    memcpy(copy->addr, unpack->data, copy->size = (uint8_t)unpack->size);
+    return (true);
+}
+
+/*
  * __wt_ref_block_free --
  *     Free the on-disk block for a reference and clear the address.
  */
@@ -1604,7 +1731,7 @@ __wt_ref_block_free(WT_SESSION_IMPL *session, WT_REF *ref)
     WT_RET(__wt_btree_block_free(session, addr.addr, addr.size));
 
     /* Clear the address (so we don't free it twice). */
-    __wt_ref_addr_free(session, ref);
+    __wt_ref_addr_free_copy(session, ref);
     return (0);
 }
 
@@ -2330,7 +2457,7 @@ __wt_btcur_skip_page(
      */
     if ((previous_state == WT_REF_DISK ||
           (previous_state == WT_REF_MEM && !__wt_page_is_modified(ref->page))) &&
-      __wt_ref_addr_copy(session, ref, &addr)) {
+      __wt_ref_addr_copy_copy(session, ref, &addr)) {
         /* If there's delete information in the disk address, we can use it. */
         if (addr.del_set && __wt_page_del_visible(session, &addr.del, true)) {
             *skipp = true;

@@ -1,0 +1,26 @@
+# Configuration for wt_11062.
+duration_seconds=120,
+cache_size_mb=250,
+workload_manager=
+(
+    populate_config=
+    (
+        collection_count=1,
+        key_count_per_collection=999,
+        key_size=3,
+        value_size=5000,
+        thread_count=1,
+    ),
+    custom_config=
+    (
+        thread_count=1,
+    ),
+    read_config=
+    (
+        thread_count=1,
+    ),
+        checkpoint_config=
+    (
+        thread_count=0,
+    )
+),
