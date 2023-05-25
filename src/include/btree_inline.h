@@ -1601,7 +1601,7 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
     WT_ADDR *addr;
     WT_CELL_UNPACK_ADDR *unpack, _unpack;
     WT_PAGE *page;
-    int i;
+    int i, j;
 
     unpack = &_unpack;
     page = ref->home;
@@ -1621,7 +1621,7 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
         return (false);
 
     /* WT-11062 race start ===================================== */
-    i = 0;
+    i = j = 0;
     __wt_errx(session, "ref->page = %p", ref->page);
     if (ref->page != NULL) {
         __wt_errx(session, "page->modify = %p", ref->page->modify);
@@ -1657,7 +1657,10 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
           "to be reconciled.");
         F_SET(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
         while (!F_ISSET(ref, WT_REF_FLAG_WT11062_REF_FREED)) {
-            __wt_yield();
+            usleep(60000);
+            if (j++ == 4000) {
+                goto give_up_race;
+            }
         }
 
         /* Make sure ref->home hasn't changed, that could be a separate issue */
