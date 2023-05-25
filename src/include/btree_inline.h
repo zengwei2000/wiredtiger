@@ -1670,9 +1670,10 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
         } else {
             __wt_errx(session, "WT-11062 - ref->home changed. dropping race attempt");
         }
-        F_CLR(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
+        
 
 give_up_race:
+        F_CLR(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
         /*__wt_errx(session, "give up race");*/
         F_CLR(ref, WT_REF_FLAG_WT11062_TRY_RACE);
     }
