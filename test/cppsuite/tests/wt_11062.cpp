@@ -92,7 +92,7 @@ public:
             cursor->set_key(cursor.get(), KEY_FOO_SUB6);
             cursor->search(cursor.get());
             // Move forward 6. This'll move us onto the page we're modifying and reconciling
-            for(int i = 0; i < 6; i++) {
+            for (int i = 0; i < 6; i++) {
                 testutil_check(cursor->next(cursor.get()));
             }
             cursor->reset(cursor.get());
@@ -109,12 +109,14 @@ public:
         // Only one connection
         collection &coll = tc->db.get_collection(0);
         scoped_cursor cursor = tc->session.open_scoped_cursor(coll.name);
-        scoped_cursor evict_cursor = tc->session.open_scoped_cursor(coll.name.c_str(), "debug=(release_evict=true)");
+        scoped_cursor evict_cursor =
+          tc->session.open_scoped_cursor(coll.name.c_str(), "debug=(release_evict=true)");
 
         while (tc->running()) {
             // Update key
             cursor->set_key(cursor.get(), KEY_FOO);
-            cursor->set_value(cursor.get(), random_generator::instance().generate_pseudo_random_string(tc->value_size));
+            cursor->set_value(cursor.get(),
+              random_generator::instance().generate_pseudo_random_string(tc->value_size));
             cursor->insert(cursor.get());
             cursor->reset(cursor.get());
 
@@ -128,7 +130,6 @@ public:
             evict_cursor->search(cursor.get());
             evict_cursor->reset(cursor.get());
         }
-
     }
 };
 

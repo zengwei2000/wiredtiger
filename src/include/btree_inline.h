@@ -1631,7 +1631,7 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
     }
 
     if (ref->page != NULL && ref->page->modify != NULL && ref->page->modify->rec_result == 0 &&
-      __wt_random(&session->rnd) % 100 == 0) {
+      __wt_random(&session->rnd) % 20 == 0 && !F_ISSET(ref, WT_REF_FLAG_WT11062_TRY_RACE)) {
         __wt_errx(session, "Trying race");
 
         /*
@@ -1642,7 +1642,7 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
         F_SET(ref, WT_REF_FLAG_WT11062_TRY_RACE);
 
         /* Wait for the page to get dirtied */
-        while (ref->page->modify->page_state != WT_PAGE_DIRTY) {
+        while (ref->page->modify->page_state == WT_PAGE_CLEAN) {
             /* Give up after 5 second so we don't deadlock. Consistently poll every 1ms in case we
              * miss the dirtied page before it's cleaned. */
             usleep(1000);
@@ -1655,7 +1655,7 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
         __wt_errx(session,
           "WT-11062 - Detected a page that has been dirtied during ref_addr_copy! Waiting for it "
           "to be reconciled.");
-          F_SET(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
+        F_SET(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
         while (!F_ISSET(ref, WT_REF_FLAG_WT11062_REF_FREED)) {
             __wt_yield();
         }
@@ -1731,7 +1731,7 @@ __wt_ref_block_free(WT_SESSION_IMPL *session, WT_REF *ref)
     WT_RET(__wt_btree_block_free(session, addr.addr, addr.size));
 
     /* Clear the address (so we don't free it twice). */
-    __wt_ref_addr_free_copy(session, ref);
+    __wt_ref_addr_free(session, ref);
     return (0);
 }
 
