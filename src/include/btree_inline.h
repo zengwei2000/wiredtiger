@@ -1630,12 +1630,8 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
     //     }
     // }
 
-    usleep(50000);
-    __wt_yield();
-
     if (ref->page != NULL && ref->page->modify != NULL && ref->page->modify->rec_result == 0 &&
-      __wt_random(&session->rnd) % 20 == 0 &&
-      !F_ISSET_ATOMIC_16(ref, WT_REF_FLAG_WT11062_TRY_RACE)) {
+      __wt_random(&session->rnd) % 20 == 0 && !F_ISSET(ref, WT_REF_FLAG_WT11062_TRY_RACE)) {
         __wt_errx(session, "Trying race");
 
         /*
@@ -1643,7 +1639,7 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
          * reconciliations Only run this once every 100 calls. We'll wait for longer on a subset of
          * pages and increase the time window for the issue to fire
          */
-        F_SET_ATOMIC_16(ref, WT_REF_FLAG_WT11062_TRY_RACE);
+        F_SET(ref, WT_REF_FLAG_WT11062_TRY_RACE);
 
         /* Wait for the page to get dirtied */
         while (ref->page->modify->page_state == WT_PAGE_CLEAN) {
@@ -1659,8 +1655,8 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
         __wt_errx(session,
           "WT-11062 - Detected a page that has been dirtied during ref_addr_copy! Waiting for it "
           "to be reconciled.");
-        F_SET_ATOMIC_16(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
-        while (!F_ISSET_ATOMIC_16(ref, WT_REF_FLAG_WT11062_REF_FREED)) {
+        F_SET(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
+        while (!F_ISSET(ref, WT_REF_FLAG_WT11062_REF_FREED)) {
             usleep(60000);
             if (j++ == 4000) {
                 goto give_up_race;
@@ -1674,11 +1670,12 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
         } else {
             __wt_errx(session, "WT-11062 - ref->home changed. dropping race attempt");
         }
+        
 
 give_up_race:
-        F_CLR_ATOMIC_16(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
+        F_CLR(ref, WT_REF_FLAG_WT11062_AWAITING_RECONCILE);
         /*__wt_errx(session, "give up race");*/
-        F_CLR_ATOMIC_16(ref, WT_REF_FLAG_WT11062_TRY_RACE);
+        F_CLR(ref, WT_REF_FLAG_WT11062_TRY_RACE);
     }
     /* WT-11062 race end ===================================== */
 

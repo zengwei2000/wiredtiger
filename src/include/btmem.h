@@ -938,16 +938,14 @@ struct __wt_ref {
  * depending on it to be "!leaf" instead.
  */
 /* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_REF_FLAG_INTERNAL 0x1u /* Page is an internal page */
-#define WT_REF_FLAG_LEAF 0x2u     /* Page is a leaf page */
-#define WT_REF_FLAG_READING 0x4u  /* Page is being read in */
-                                  /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+#define WT_REF_FLAG_INTERNAL 0x01u                   /* Page is an internal page */
+#define WT_REF_FLAG_LEAF 0x02u                       /* Page is a leaf page */
+#define WT_REF_FLAG_READING 0x04u                    /* Page is being read in */
+#define WT_REF_FLAG_WT11062_AWAITING_RECONCILE 0x08u /* Signal we've 86ed the ref->addr */
+#define WT_REF_FLAG_WT11062_REF_FREED 0x10u          /* Signal we've 86ed the ref->addr */
+#define WT_REF_FLAG_WT11062_TRY_RACE 0x20u           /* Start attempt to trigger WT-11062 race */
+                                                     /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
     uint8_t flags;
-
-#define WT_REF_FLAG_WT11062_TRY_RACE 0x1u           /* Start attempt to trigger WT-11062 race */
-#define WT_REF_FLAG_WT11062_AWAITING_RECONCILE 0x2u /* Signal we've 86ed the ref->addr */
-#define WT_REF_FLAG_WT11062_REF_FREED 0x4u          /* Signal we've 86ed the ref->addr */
-    uint16_t flags_atomic;
 
 #define WT_REF_DISK 0       /* Page is on disk */
 #define WT_REF_DELETED 1    /* Page is on disk, but deleted */
@@ -1126,9 +1124,9 @@ struct __wt_ref {
  * inserted padding which would break the world.
  */
 #ifdef HAVE_REF_TRACK
-#define WT_REF_SIZE (50 + WT_REF_SAVE_STATE_MAX * sizeof(WT_REF_HIST) + 8)
+#define WT_REF_SIZE (48 + WT_REF_SAVE_STATE_MAX * sizeof(WT_REF_HIST) + 8)
 #else
-#define WT_REF_SIZE 50
+#define WT_REF_SIZE 48
 #endif
 
 /* A macro wrapper allowing us to remember the callers code location */
