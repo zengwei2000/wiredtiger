@@ -1622,13 +1622,13 @@ __wt_ref_addr_copy_copy(WT_SESSION_IMPL *session, WT_REF *ref, WT_ADDR_COPY *cop
 
     /* WT-11062 race start ===================================== */
     i = j = 0;
-    // __wt_errx(session, "ref->page = %p", ref->page);
-    // if (ref->page != NULL) {
-    //     __wt_errx(session, "page->modify = %p", ref->page->modify);
-    //     if (ref->page->modify != NULL) {
-    //         __wt_errx(session, "rec_result = %d", ref->page->modify->rec_result);
-    //     }
-    // }
+    __wt_errx(session, "ref->page = %p", ref->page);
+    if (ref->page != NULL) {
+        __wt_errx(session, "page->modify = %p", ref->page->modify);
+        if (ref->page->modify != NULL) {
+            __wt_errx(session, "rec_result = %d", ref->page->modify->rec_result);
+        }
+    }
 
     if (ref->page != NULL && ref->page->modify != NULL && ref->page->modify->rec_result == 0 &&
       __wt_random(&session->rnd) % 20 == 0 && !F_ISSET(ref, WT_REF_FLAG_WT11062_TRY_RACE)) {
