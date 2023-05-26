@@ -285,13 +285,13 @@ __wt_ref_addr_free(WT_SESSION_IMPL *session, WT_REF *ref)
          * Signal to ref_addr_copy_copy that we've freed the ref. Don't move forward in case this
          * thread ends up populating ref->addr with new (copy-able) data
          */
-        if (F_ISSET(ref, WT_REF_FLAG_WT11062_TRY_RACE) &&
-          !F_ISSET(ref, WT_REF_FLAG_WT11062_REF_FREED)) {
-            F_SET(ref, WT_REF_FLAG_WT11062_REF_FREED);
+        if (F_ISSET_ATOMIC_16(ref, WT_REF_FLAG_WT11062_TRY_RACE) &&
+          !F_ISSET_ATOMIC_16(ref, WT_REF_FLAG_WT11062_REF_FREED)) {
+            F_SET_ATOMIC_16(ref, WT_REF_FLAG_WT11062_REF_FREED);
             while (F_ISSET(ref, WT_REF_FLAG_WT11062_TRY_RACE)) {
                 __wt_yield();
             }
-            F_CLR(ref, WT_REF_FLAG_WT11062_REF_FREED);
+            F_CLR_ATOMIC_16(ref, WT_REF_FLAG_WT11062_REF_FREED);
         }
         __wt_free(session, ref_addr);
     }
