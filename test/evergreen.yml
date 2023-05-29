@@ -4264,6 +4264,26 @@ tasks:
     name: wt-11062-repro9-2
   - <<: *repro-stress-test-2
     name: wt-11062-repro10-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro11-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro12-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro13-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro14-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro15-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro16-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro17-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro18-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro19-2
+  - <<: *repro-stress-test-2
+    name: wt-11062-repro20-2
 
   - <<: *format-stress-test
     name: format-stress-test-1
