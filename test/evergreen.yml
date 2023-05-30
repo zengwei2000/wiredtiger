@@ -632,7 +632,7 @@ functions:
         set -o verbose
         ${format_test_setting|}
         for i in $(seq ${times|1}); do
-          ${test_env_vars|} ./format.sh ${smp_command|} ${format_test_script_args|} 2>&1
+          ${test_env_vars|} ./format.sh -F ${smp_command|} ${format_test_script_args|} 2>&1
         done
   "format test tiered":
     command: shell.exec
@@ -1133,6 +1133,19 @@ variables:
       - func: "format test script"
         vars:
           format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360
+
+  - &repro-stress-test
+    name: wt-11062-repro
+    tags: ["wt-11062-repro"]
+    exec_timeout_secs: 25200
+    commands:
+      - func: "get project"
+      - func: "compile wiredtiger"
+        vars:
+          <<: *configure_flags_with_builtins
+      - func: "format test script"
+        vars:
+          format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 360 -c ../../../CONFIG.WT-11062
 
   - &format-stress-test-nonstandalone
     exec_timeout_secs: 25200
@@ -4197,6 +4210,47 @@ tasks:
           # See https://bugzilla.redhat.com/show_bug.cgi?id=1686261#c10 for the potential cause.
           format_test_script_args: -e "SEGFAULT_SIGNALS=all" -b "catchsegv ./t" -t 120 -- -C "mmap=false,mmap_all=false"
 
+  - <<: *repro-stress-test
+    name: wt-11062-repro-01
+  - <<: *repro-stress-test
+    name: wt-11062-repro-02
+  - <<: *repro-stress-test
+    name: wt-11062-repro-03
+  - <<: *repro-stress-test
+    name: wt-11062-repro-04
+  - <<: *repro-stress-test
+    name: wt-11062-repro-05
+  - <<: *repro-stress-test
+    name: wt-11062-repro-06
+  - <<: *repro-stress-test
+    name: wt-11062-repro-07
+  - <<: *repro-stress-test
+    name: wt-11062-repro-08
+  - <<: *repro-stress-test
+    name: wt-11062-repro-09
+  - <<: *repro-stress-test
+    name: wt-11062-repro-10
+  - <<: *repro-stress-test
+    name: wt-11062-repro-11
+  - <<: *repro-stress-test
+    name: wt-11062-repro-12
+  - <<: *repro-stress-test
+    name: wt-11062-repro-13
+  - <<: *repro-stress-test
+    name: wt-11062-repro-14
+  - <<: *repro-stress-test
+    name: wt-11062-repro-15
+  - <<: *repro-stress-test
+    name: wt-11062-repro-16
+  - <<: *repro-stress-test
+    name: wt-11062-repro-17
+  - <<: *repro-stress-test
+    name: wt-11062-repro-18
+  - <<: *repro-stress-test
+    name: wt-11062-repro-19
+  - <<: *repro-stress-test
+    name: wt-11062-repro-20
+
   - <<: *format-stress-test
     name: format-stress-test-1
     tags: ["stress-test-1"]
@@ -5664,6 +5718,7 @@ buildvariants:
     CMAKE_PREFIX_PATH: -DCMAKE_PREFIX_PATH="$(pwd)/TCMALLOC_LIB"
     python_binary: '/opt/mongodbtoolchain/v4/bin/python3'
   tasks:
+    - name: ".wt-11062-repro"
     - name: ".stress-test-1"
     - name: ".stress-test-2"
     - name: ".stress-test-3"
@@ -5706,6 +5761,7 @@ buildvariants:
     CMAKE_PREFIX_PATH: -DCMAKE_PREFIX_PATH="$(pwd)/TCMALLOC_LIB"
     python_binary: '/opt/mongodbtoolchain/v4/bin/python3'
   tasks:
+    - name: ".wt-11062-repro"
     - name: ".stress-test-1"
     - name: ".stress-test-2"
     - name: ".stress-test-3"

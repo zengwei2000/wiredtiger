@@ -48,9 +48,9 @@ wts_checkpoints(void)
     if (g.checkpoint_config != CHECKPOINT_WIREDTIGER)
         return;
 
-    testutil_check(
-      __wt_snprintf(config, sizeof(config), ",checkpoint=(wait=%" PRIu32 ",log_size=%" PRIu32 ")",
-        GV(CHECKPOINT_WAIT), MEGABYTE(GV(CHECKPOINT_LOG_SIZE))));
+    /* Hard code maximum frequency for checkpoints */
+    testutil_check(__wt_snprintf(config, sizeof(config),
+      ",checkpoint=(wait=1,log_size=%" PRIu32 ")", MEGABYTE(GV(CHECKPOINT_LOG_SIZE))));
     testutil_check(g.wts_conn->reconfigure(g.wts_conn, config));
 }
 

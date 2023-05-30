@@ -480,6 +480,9 @@ __session_reconfigure(WT_SESSION *wt_session, const char *config)
         else
             F_CLR(session, WT_SESSION_DEBUG_RELEASE_EVICT);
     }
+    /* Force this setting on. We want as many pages as possible to have rec_result = 0 which we'll
+     * get from restoring pages from disk. */
+    F_SET(session, WT_SESSION_DEBUG_RELEASE_EVICT);
 
     WT_ERR_NOTFOUND_OK(ret, false);
 
