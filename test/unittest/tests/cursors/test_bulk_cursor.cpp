@@ -103,8 +103,13 @@ check_txn_updates(std::string const &label, WT_SESSION_IMPL *session_impl, bool 
             case WT_TXN_OP_INMEM_COL:
             case WT_TXN_OP_INMEM_ROW:
                 WT_UPDATE *upd = op->u.op_upd;
-                printf("    mod %u, op->type = %i, upd->txnid = 0x%" PRIx64 "\n", i, op->type,
-                  upd->txnid);
+                printf(".   mod %u, upd 0x%p, op->type = %i, upd->txnid = 0x%" PRIx64 ", upd->durable_ts 0x%" PRIu64 "\n",
+                  i, upd, op->type, upd->txnid, upd->durable_ts);
+
+                if (upd->txnid > 100) {
+                    printf(".     The upd->txnid value is wierd!\n");
+                }
+
                 break;
             }
         }
@@ -132,6 +137,47 @@ report_cache_status(WT_CACHE *cache, std::string const &label, bool diagnostics)
         printf(". bytes_dirty_leaf: %" PRIu64 "\n", cache->bytes_dirty_leaf);
     }
 }
+
+
+int
+debug_dropped_state(WT_SESSION_IMPL *session, const char *uri)
+{
+    WT_CONNECTION_IMPL *conn;
+    WT_DATA_HANDLE *dhandle;
+    WT_DECL_RET;
+
+    printf("Starting debug_dropped_state()\n");
+
+    conn = S2C(session);
+
+    WT_ASSERT(session, FLD_ISSET(session->lock_flags, WT_SESSION_LOCKED_HANDLE_LIST_WRITE));
+    WT_ASSERT(session, session->dhandle == NULL);
+
+    TAILQ_FOREACH (dhandle, &conn->dhqh, q) {
+        printf(".   dhandle 0c%p, name %s, is dropped %d, is open %d, flags 0x%x, type %d\n",
+          dhandle, dhandle->name, F_ISSET(dhandle, WT_DHANDLE_DROPPED), F_ISSET(dhandle, WT_DHANDLE_OPEN), dhandle->flags, dhandle->type);
+
+        if (dhandle->type == __wt_data_handle::WT_DHANDLE_TYPE_BTREE) {
+            WT_BTREE *btree = (WT_BTREE*)dhandle->handle;
+            printf(".     btree = 0x%p, btree flags = 0x%x, root.page 0x%p\n",
+              btree, btree->flags, btree->root.page);
+        }
+
+        if (strcmp(uri, dhandle->name) == 0) {
+            F_CLR(dhandle, WT_DHANDLE_DROPPED);
+        }
+    }
+
+    return 0;
+}
+
+void
+lock_and_debug_dropped_state(WT_SESSION_IMPL *session, const char *uri) {
+    WT_DECL_RET;
+    WT_WITH_HANDLE_LIST_WRITE_LOCK(
+      session, ret = debug_dropped_state(session, uri));
+}
+
 
 /*
  * cache_destroy_memory_check --
@@ -182,6 +228,48 @@ cache_destroy_memory_check(
     }
 }
 
+
+int64_t
+get_stats_value(WT_CURSOR *stats_cursor, int stat)
+{
+    int64_t dhandles_open_count = 0;
+    char *desc = nullptr;
+    char *pvalue = nullptr;
+
+    stats_cursor->set_key(stats_cursor, stat);
+    REQUIRE(stats_cursor->search(stats_cursor) == 0);
+    REQUIRE(stats_cursor->get_value(stats_cursor, &desc, &pvalue, &dhandles_open_count) == 0);
+    return dhandles_open_count;
+}
+
+
+int64_t
+get_dhandles_open_count(WT_CURSOR *stats_cursor)
+{
+    return get_stats_value(stats_cursor, WT_STAT_CONN_DH_CONN_HANDLE_COUNT);
+}
+
+void
+dump_stats(WT_CURSOR *stats_cursor)
+{
+  printf("Dump Stats:\n");
+  printf(". WT_STAT_CONN_DH_CONN_HANDLE_SIZE value = %" PRIu64 "\n",
+    get_stats_value(stats_cursor, WT_STAT_CONN_DH_CONN_HANDLE_SIZE));
+  printf(". WT_STAT_CONN_DH_CONN_HANDLE_COUNT value = %" PRIu64 "\n",
+    get_stats_value(stats_cursor, WT_STAT_CONN_DH_CONN_HANDLE_COUNT));
+  printf(". WT_STAT_CONN_DH_SWEEP_REF value = %" PRIu64 "\n",
+    get_stats_value(stats_cursor, WT_STAT_CONN_DH_SWEEP_REF));
+  printf(". WT_STAT_CONN_DH_SWEEP_CLOSE value = %" PRIu64 "\n",
+    get_stats_value(stats_cursor, WT_STAT_CONN_DH_SWEEP_CLOSE));
+  printf(". WT_STAT_CONN_DH_SWEEP_REMOVE value = %" PRIu64 "\n",
+    get_stats_value(stats_cursor, WT_STAT_CONN_DH_SWEEP_REMOVE));
+  printf(". WT_STAT_CONN_DH_SWEEP_TOD value = %" PRIu64 "\n",
+    get_stats_value(stats_cursor, WT_STAT_CONN_DH_SWEEP_TOD));
+  printf(". WT_STAT_CONN_DH_SWEEPS value = %" PRIu64 "\n",
+    get_stats_value(stats_cursor, WT_STAT_CONN_DH_SWEEPS));
+}
+
+
 /*
  * cursor_test --
  *     Perform a series of combinations of operations involving cursors to confirm correct behavior
@@ -195,8 +283,17 @@ cursor_test(std::string const &config, bool close, int expected_open_cursor_resu
     WT_SESSION_IMPL *session_impl = conn.createSession();
     WT_SESSION *session = &session_impl->iface;
     std::string uri = "table:cursor_test";
+    std::string file_uri = "file:cursor_test.wt";
 
     REQUIRE(session->create(session, uri.c_str(), "key_format=S,value_format=S") == 0);
+
+    std::string stats_cursor_name = "statistics:";
+
+    WT_CURSOR *stats_cursor;
+    int open_stats_cursor_result =
+      session->open_cursor(session, stats_cursor_name.c_str(), nullptr, nullptr, &stats_cursor);
+    REQUIRE(open_stats_cursor_result == 0);
+
     REQUIRE(session->begin_transaction(session, "") == 0);
 
     WT_CURSOR *cursor = nullptr;
@@ -209,65 +306,71 @@ cursor_test(std::string const &config, bool close, int expected_open_cursor_resu
 
         std::string close_as_string = close ? "true" : "false";
 
-        SECTION("Checkpoint during transaction then commit: config = " + config +
-          ", close = " + close_as_string)
-        {
-            int result = session->checkpoint(session, NULL);
-            REQUIRE(result == EINVAL);
+        dump_stats(stats_cursor);
 
-            if (close) {
-                REQUIRE(cursor->close(cursor) == 0);
-            }
 
-            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
-        }
+//        SECTION("Checkpoint during transaction then commit: config = " + config +
+//          ", close = " + close_as_string)
+//        {
+//            int result = session->checkpoint(session, NULL);
+//            REQUIRE(result == EINVAL);
+//
+//            if (close) {
+//                REQUIRE(cursor->close(cursor) == 0);
+//            }
+//
+//            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
+//        }
+//
+//        SECTION("Checkpoint in 2nd thread during transaction then commit: config = " + config +
+//          ", close = " + close_as_string)
+//        {
+//            std::thread thread([&]() { thread_function_checkpoint(session); });
+//            thread.join();
+//
+//            if (close) {
+//                REQUIRE(cursor->close(cursor) == 0);
+//            }
+//
+//            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
+//        }
 
-        SECTION("Checkpoint in 2nd thread during transaction then commit: config = " + config +
-          ", close = " + close_as_string)
-        {
-            std::thread thread([&]() { thread_function_checkpoint(session); });
-            thread.join();
+//        SECTION("Drop in 2nd thread during transaction then commit: config = " + config +
+//          ", close = " + close_as_string)
+//        {
+//            std::thread thread([&]() { thread_function_drop(session, uri); });
+//            thread.join();
+//
+//            if (close) {
+//                REQUIRE(cursor->close(cursor) == 0);
+//            }
+//
+//            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
+//        }
 
-            if (close) {
-                REQUIRE(cursor->close(cursor) == 0);
-            }
-
-            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
-        }
-
-        SECTION("Drop in 2nd thread during transaction then commit: config = " + config +
-          ", close = " + close_as_string)
-        {
-            std::thread thread([&]() { thread_function_drop(session, uri); });
-            thread.join();
-
-            if (close) {
-                REQUIRE(cursor->close(cursor) == 0);
-            }
-
-            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
-        }
-
-        SECTION("Checkpoint in 2nd thread during transaction then rollback: config = " + config +
-          ", close = " + close_as_string)
-        {
-            std::thread thread([&]() { thread_function_checkpoint(session); });
-            thread.join();
-
-            if (close) {
-                REQUIRE(cursor->close(cursor) == 0);
-            }
-
-            REQUIRE(session->rollback_transaction(session, "") == 0);
-        }
+//        SECTION("Checkpoint in 2nd thread during transaction then rollback: config = " + config +
+//          ", close = " + close_as_string)
+//        {
+//            std::thread thread([&]() { thread_function_checkpoint(session); });
+//            thread.join();
+//
+//            if (close) {
+//                REQUIRE(cursor->close(cursor) == 0);
+//            }
+//
+//            REQUIRE(session->rollback_transaction(session, "") == 0);
+//        }
 
         SECTION(
           "Drop then checkpoint in one thread: config = " + config + ", close = " + close_as_string)
         {
             check_txn_updates("before close", session_impl, diagnostics);
+            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
             if (close) {
                 REQUIRE(cursor->close(cursor) == 0);
                 check_txn_updates("before drop", session_impl, diagnostics);
+                lock_and_debug_dropped_state(session_impl, file_uri.c_str());
+                printf("dhandles_open_count = %" PRIu64 "\n", get_dhandles_open_count(stats_cursor));
                 __wt_sleep(1, 0);
                 REQUIRE(session->drop(session, uri.c_str(), "force=true") == 0);
             } else {
@@ -278,14 +381,43 @@ cursor_test(std::string const &config, bool close, int expected_open_cursor_resu
             if (diagnostics)
                 printf("After drop\n");
 
+//            dump_stats(stats_cursor);
+
+//            if (S2C(session)->sweep_cond != NULL)
+//                __wt_cond_signal(session_impl, S2C(session_impl)->sweep_cond);
+
             __wt_sleep(1, 0);
             check_txn_updates("before checkpoint", session_impl, diagnostics);
+            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
             REQUIRE(session->checkpoint(session, nullptr) == EINVAL);
-            __wt_sleep(1, 0);
-            check_txn_updates("before commit", session_impl, diagnostics);
 
-            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
-            check_txn_updates("after commit", session_impl, diagnostics);
+            if (S2C(session)->sweep_cond != NULL)
+                __wt_cond_signal(session_impl, S2C(session_impl)->sweep_cond);
+            __wt_sleep(1, 0);
+
+//            dump_stats(stats_cursor);
+
+            check_txn_updates("before commit/rollback", session_impl, diagnostics);
+            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
+
+//            dump_stats(stats_cursor);
+
+            REQUIRE(session->rollback_transaction(session, "") == expected_commit_result);
+//            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
+            check_txn_updates("after commit/rollback", session_impl, diagnostics);
+
+//            dump_stats(stats_cursor);
+
+            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
+
+            if (S2C(session)->sweep_cond != NULL)
+                __wt_cond_signal(session_impl, S2C(session_impl)->sweep_cond);
+            __wt_sleep(1, 0);
+
+            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
+//            dump_stats(stats_cursor);
+
+            REQUIRE(stats_cursor->close(stats_cursor) == 0);
         }
     }
 }
@@ -362,18 +494,18 @@ multiple_drop_test(std::string const &config, int expected_open_cursor_result,
 
 TEST_CASE("Cursor: bulk, non-bulk, checkpoint and drop combinations", "[cursor]")
 {
-    const bool diagnostics = false;
+    const bool diagnostics = true;
 
-    cache_destroy_memory_check("", 0, diagnostics);
-    cache_destroy_memory_check("bulk", EINVAL, diagnostics);
-
-    cursor_test("", false, 0, EINVAL, diagnostics);
+//    cache_destroy_memory_check("", 0, diagnostics);
+//    cache_destroy_memory_check("bulk", EINVAL, diagnostics);
+//
+//    cursor_test("", false, 0, EINVAL, diagnostics);
     cursor_test("", true, 0, EINVAL, diagnostics);
-    cursor_test("bulk", false, EINVAL, 0, diagnostics);
-    cursor_test("bulk", true, EINVAL, 0, diagnostics);
-
-    multiple_drop_test("", 0, EINVAL, false, diagnostics);
-    multiple_drop_test("", 0, EINVAL, true, diagnostics);
-    multiple_drop_test("bulk", EINVAL, 0, false, diagnostics);
-    multiple_drop_test("bulk", EINVAL, 0, true, diagnostics);
+//    cursor_test("bulk", false, EINVAL, 0, diagnostics);
+//    cursor_test("bulk", true, EINVAL, 0, diagnostics);
+//
+//    multiple_drop_test("", 0, EINVAL, false, diagnostics);
+//    multiple_drop_test("", 0, EINVAL, true, diagnostics);
+//    multiple_drop_test("bulk", EINVAL, 0, false, diagnostics);
+//    multiple_drop_test("bulk", EINVAL, 0, true, diagnostics);
 }

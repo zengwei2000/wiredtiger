@@ -162,6 +162,8 @@ __sweep_discard_trees(WT_SESSION_IMPL *session, u_int *dead_handlesp)
     WT_DATA_HANDLE *dhandle;
     WT_DECL_RET;
 
+    printf("Starting __sweep_discard_trees()\n");
+
     *dead_handlesp = 0;
 
     conn = S2C(session);
@@ -176,8 +178,10 @@ __sweep_discard_trees(WT_SESSION_IMPL *session, u_int *dead_handlesp)
         /*
          * The sweep server should not close dropped dhandles, they will be closed elsewhere.
          */
-        if (F_ISSET(dhandle, WT_DHANDLE_DROPPED))
+        if (F_ISSET(dhandle, WT_DHANDLE_DROPPED)) {
+            printf("WT_DHANDLE_DROPPED was detected\n");
             continue;
+        }
 
         /* If the handle is marked dead, flush it from cache. */
         WT_WITH_DHANDLE(session, dhandle, ret = __wt_conn_dhandle_close(session, false, false));
@@ -191,6 +195,8 @@ __sweep_discard_trees(WT_SESSION_IMPL *session, u_int *dead_handlesp)
 
         WT_RET_BUSY_OK(ret);
     }
+
+    printf("Endng __sweep_discard_trees()\n");
 
     return (0);
 }
