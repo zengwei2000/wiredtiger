@@ -106,6 +106,7 @@ check_txn_updates(std::string const &label, WT_SESSION_IMPL *session_impl, bool 
                 printf(".   mod %u, upd 0x%p, op->type = %i, upd->txnid = 0x%" PRIx64 ", upd->durable_ts 0x%" PRIu64 "\n",
                   i, upd, op->type, upd->txnid, upd->durable_ts);
 
+                // At least during current diagnosis a txnid greater than 100 means something has gone wrong
                 if (upd->txnid > 100) {
                     printf(".     The upd->txnid value is wierd!\n");
                 }
@@ -388,7 +389,7 @@ cursor_test(std::string const &config, bool close, int expected_open_cursor_resu
 
             __wt_sleep(1, 0);
             check_txn_updates("before checkpoint", session_impl, diagnostics);
-            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
+            lock_and_debug_dropped_state(session_impl, ""); //file_uri.c_str());
             REQUIRE(session->checkpoint(session, nullptr) == EINVAL);
 
             if (S2C(session)->sweep_cond != NULL)
@@ -397,25 +398,32 @@ cursor_test(std::string const &config, bool close, int expected_open_cursor_resu
 
 //            dump_stats(stats_cursor);
 
-            check_txn_updates("before commit/rollback", session_impl, diagnostics);
-            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
-
-//            dump_stats(stats_cursor);
-
-            REQUIRE(session->rollback_transaction(session, "") == expected_commit_result);
-//            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
-            check_txn_updates("after commit/rollback", session_impl, diagnostics);
-
-//            dump_stats(stats_cursor);
-
-            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
+            lock_and_debug_dropped_state(session_impl, ""); //file_uri.c_str());
 
             if (S2C(session)->sweep_cond != NULL)
                 __wt_cond_signal(session_impl, S2C(session_impl)->sweep_cond);
             __wt_sleep(1, 0);
 
-            lock_and_debug_dropped_state(session_impl, file_uri.c_str());
 //            dump_stats(stats_cursor);
+
+            check_txn_updates("before commit/rollback", session_impl, diagnostics);
+            REQUIRE(session->rollback_transaction(session, "") == 0);
+//            REQUIRE(session->commit_transaction(session, "") == expected_commit_result);
+            check_txn_updates("after commit/rollback", session_impl, diagnostics);
+
+            __wt_sleep(1, 0);
+//            dump_stats(stats_cursor);
+
+            lock_and_debug_dropped_state(session_impl, ""); //file_uri.c_str());
+
+            if (S2C(session)->sweep_cond != NULL)
+                __wt_cond_signal(session_impl, S2C(session_impl)->sweep_cond);
+            __wt_sleep(1, 0);
+
+            lock_and_debug_dropped_state(session_impl, ""); //file_uri.c_str());
+//            dump_stats(stats_cursor);
+
+            __wt_sleep(1, 0);
 
             REQUIRE(stats_cursor->close(stats_cursor) == 0);
         }
