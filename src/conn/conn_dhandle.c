@@ -775,8 +775,10 @@ __conn_dhandle_close_one(
         if (ret == 0)
             ret = __wt_meta_track_sub_off(session);
     }
-    if (removed)
+    if (removed) {
+        F_SET(session->dhandle, WT_DHANDLE_DEAD);
         F_SET(session->dhandle, WT_DHANDLE_DROPPED);
+    }
 
     if (!WT_META_TRACKING(session))
         WT_TRET(__wt_session_release_dhandle(session));

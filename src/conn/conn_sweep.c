@@ -179,7 +179,7 @@ __sweep_discard_trees(WT_SESSION_IMPL *session, u_int *dead_handlesp)
          * The sweep server should not close dropped dhandles, they will be closed elsewhere.
          */
         if (F_ISSET(dhandle, WT_DHANDLE_DROPPED)) {
-            printf("WT_DHANDLE_DROPPED was detected\n");
+            printf("WT_DHANDLE_DROPPED was detected, flags = 0x%x\n", dhandle->flags);
             continue;
         }
 

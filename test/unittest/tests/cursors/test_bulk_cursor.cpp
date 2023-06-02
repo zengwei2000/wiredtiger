@@ -165,7 +165,7 @@ debug_dropped_state(WT_SESSION_IMPL *session, const char *uri)
         }
 
         if (strcmp(uri, dhandle->name) == 0) {
-            F_CLR(dhandle, WT_DHANDLE_DROPPED);
+//            F_CLR(dhandle, WT_DHANDLE_DROPPED);
         }
     }
 
@@ -506,7 +506,7 @@ TEST_CASE("Cursor: bulk, non-bulk, checkpoint and drop combinations", "[cursor]"
 
 //    cache_destroy_memory_check("", 0, diagnostics);
 //    cache_destroy_memory_check("bulk", EINVAL, diagnostics);
-//
+
 //    cursor_test("", false, 0, EINVAL, diagnostics);
     cursor_test("", true, 0, EINVAL, diagnostics);
 //    cursor_test("bulk", false, EINVAL, 0, diagnostics);
