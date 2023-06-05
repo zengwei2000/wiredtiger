@@ -801,10 +801,12 @@ struct __wt_page {
  */
 
 /* Must be 0, as structures will be default initialized with 0. */
-#define WT_PREPARE_INIT 0
-#define WT_PREPARE_INPROGRESS 1
-#define WT_PREPARE_LOCKED 2
-#define WT_PREPARE_RESOLVED 3
+enum __wt_prepare_state_e {
+    WT_PREPARE_INIT = 0,
+    WT_PREPARE_INPROGRESS = 1,
+    WT_PREPARE_LOCKED = 2,
+    WT_PREPARE_RESOLVED = 3,
+};
 typedef uint8_t __wt_prepare_state;
 
 /*
@@ -903,11 +905,13 @@ struct __wt_page_deleted {
     bool selected_for_write;
 };
 
-#define WT_REF_DISK 0    /* Page is on disk */
-#define WT_REF_DELETED 1 /* Page is on disk, but deleted */
-#define WT_REF_LOCKED 2  /* Page locked for exclusive access */
-#define WT_REF_MEM 3     /* Page is in cache and valid */
-#define WT_REF_SPLIT 4   /* Parent page split (WT_REF dead) */
+enum __wt_ref_state_e {
+    WT_REF_DISK = 0,    /* Page is on disk */
+    WT_REF_DELETED = 1, /* Page is on disk, but deleted */
+    WT_REF_LOCKED = 2,  /* Page locked for exclusive access */
+    WT_REF_MEM = 3,     /* Page is in cache and valid */
+    WT_REF_SPLIT = 4,   /* Parent page split (WT_REF dead) */
+};
 typedef uint8_t __wt_ref_state;
 
 /*
@@ -916,11 +920,13 @@ typedef uint8_t __wt_ref_state;
  * miss one). If we run out of bits in the flags field, remove the internal flag and rewrite tests
  * depending on it to be "!leaf" instead.
  */
-/* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_REF_FLAG_INTERNAL 0x1u /* Page is an internal page */
-#define WT_REF_FLAG_LEAF 0x2u     /* Page is a leaf page */
-#define WT_REF_FLAG_READING 0x4u  /* Page is being read in */
-                                  /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+enum __wt_ref_flags_f {
+    /* AUTOMATIC FLAG VALUE GENERATION START 0 */
+    WT_REF_FLAG_INTERNAL = 0x1u, /* Page is an internal page */
+    WT_REF_FLAG_LEAF = 0x2u,     /* Page is a leaf page */
+    WT_REF_FLAG_READING = 0x4u,  /* Page is being read in */
+    /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+};
 typedef uint8_t __wt_ref_flags;
 
 /*
@@ -1258,22 +1264,26 @@ struct __wt_ikey {
 #define WT_IKEY_DATA(ikey) ((void *)((uint8_t *)(ikey) + sizeof(WT_IKEY)))
 };
 
-/* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_UPDATE_DS 0x01u                       /* Update has been written to the data store. */
-#define WT_UPDATE_HS 0x02u                       /* Update has been written to history store. */
-#define WT_UPDATE_PREPARE_RESTORED_FROM_DS 0x04u /* Prepared update restored from data store. */
-#define WT_UPDATE_RESTORED_FAST_TRUNCATE 0x08u   /* Fast truncate instantiation */
-#define WT_UPDATE_RESTORED_FROM_DS 0x10u         /* Update restored from data store. */
-#define WT_UPDATE_RESTORED_FROM_HS 0x20u         /* Update restored from history store. */
-#define WT_UPDATE_TO_DELETE_FROM_HS 0x40u        /* Update needs to be deleted from history store */
-                                                 /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+enum __wt_update_flags_f {
+    /* AUTOMATIC FLAG VALUE GENERATION START 0 */
+    WT_UPDATE_DS = 0x01u,                       /* Update has been written to the data store. */
+    WT_UPDATE_HS = 0x02u,                       /* Update has been written to history store. */
+    WT_UPDATE_PREPARE_RESTORED_FROM_DS = 0x04u, /* Prepared update restored from data store. */
+    WT_UPDATE_RESTORED_FAST_TRUNCATE = 0x08u,   /* Fast truncate instantiation */
+    WT_UPDATE_RESTORED_FROM_DS = 0x10u,         /* Update restored from data store. */
+    WT_UPDATE_RESTORED_FROM_HS = 0x20u,         /* Update restored from history store. */
+    WT_UPDATE_TO_DELETE_FROM_HS = 0x40u,        /* Update needs to be deleted from history store */
+    /* AUTOMATIC FLAG VALUE GENERATION STOP 8 */
+};
 typedef uint8_t __wt_update_flags;
 
-#define WT_UPDATE_INVALID 0   /* diagnostic check */
-#define WT_UPDATE_MODIFY 1    /* partial-update modify value */
-#define WT_UPDATE_RESERVE 2   /* reserved */
-#define WT_UPDATE_STANDARD 3  /* complete value */
-#define WT_UPDATE_TOMBSTONE 4 /* deleted */
+enum __wt_update_type_e {
+    WT_UPDATE_INVALID = 0,   /* diagnostic check */
+    WT_UPDATE_MODIFY = 1,    /* partial-update modify value */
+    WT_UPDATE_RESERVE = 2,   /* reserved */
+    WT_UPDATE_STANDARD = 3,  /* complete value */
+    WT_UPDATE_TOMBSTONE = 4, /* deleted */
+};
 typedef uint8_t __wt_update_type;
 
 /*
@@ -1629,10 +1639,12 @@ struct __wt_col_fix_auxiliary_header {
     }                                                    \
     while (0)
 
-/* AUTOMATIC FLAG VALUE GENERATION START 0 */
-#define WT_VRFY_DISK_CONTINUE_ON_FAILURE 0x1u
-#define WT_VRFY_DISK_EMPTY_PAGE_OK 0x2u
-/* AUTOMATIC FLAG VALUE GENERATION STOP 32 */
+enum __wt_verify_flags_f {
+    /* AUTOMATIC FLAG VALUE FOO GENERATION START 0 */
+    WT_VRFY_DISK_CONTINUE_ON_FAILURE = 0x1u,
+    WT_VRFY_DISK_EMPTY_PAGE_OK = 0x2u,
+    /* AUTOMATIC FLAG VALUE FOO GENERATION STOP 32 */
+};
 typedef uint32_t __wt_verify_flags;
 
 /*

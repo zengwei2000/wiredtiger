@@ -9,8 +9,9 @@ from dist import all_c_files, all_h_files, compare_srcfile
 # the flags and give them a unique value.
 #
 # To add a new flag declare it at the top of the flags list as:
-# #define WT_NEW_FLAG_NAME      0x0u
-#
+#     #define WT_NEW_FLAG_NAME      0x0u
+# or if the flag list is inside an enum
+#     WT_NEW_FLAG_NAME = 0x0u
 # and it will be automatically alphabetized and assigned the proper value.
 def flag_declare(name):
     tmp_file = '__tmp'
@@ -85,7 +86,8 @@ def flag_declare(name):
                 start = 0
                 stopped = line
                 continue
-            elif parsing and line.find('#define') == -1:
+            elif parsing and line.find('#define') == -1 and line.find('=') == -1:
+                # TODO - Is this overly generic? We could do regex matching instead
                 print(name + ": line " + str(lcnt) +\
                       ": unexpected flag line, no #define", file=sys.stderr)
                 sys.exit(1)

@@ -50,7 +50,7 @@ if __name__ == '__main__':
     with open(tmp, 'w') as tfile:
         generate_string_conversion('Convert a prepare state to its string representation.',
                                    'prepare_state',
-                                   r'^#define\s+(WT_PREPARE_[A-Z0-9_]+)\s+[0-9]+',
+                                   r'^\s+(WT_PREPARE_[A-Z0-9_]+)\s+=\s+[0-9]+,',
                                    'src/include/btmem.h',
                                    tfile)
         tfile.write('\n')
@@ -58,7 +58,7 @@ if __name__ == '__main__':
         generate_string_conversion('Convert an update type to its string representation.',
                                    'update_type',
                                    # Also match comments/space at end to avoid e.g. WT_UPDATE_SIZE.
-                                   r'^#define\s+(WT_UPDATE_[A-Z0-9_]+)\s+[0-9]+\s+/\*',
+                                   r'^\s+(WT_UPDATE_[A-Z0-9_]+)\s+=\s+[0-9]+,\s+/\*',
                                    'src/include/btmem.h',
                                    tfile)
 

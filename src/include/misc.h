@@ -176,7 +176,8 @@
  * constant might be a negative integer), and to ensure the hex constant is the correct size before
  * applying the bitwise not operator.
  */
-#define FLD_CLR(field, mask) ((void)((field) &= ~(mask)))
+/* FIXME - This uint64_t cast is a fix to get the PoC off the ground. Can we do better? */
+#define FLD_CLR(field, mask) ((void)((field) &= ~((uint64_t)(mask))))
 #define FLD_MASK(field, mask) ((field) & (mask))
 #define FLD_ISSET(field, mask) (FLD_MASK(field, mask) != 0)
 #define FLD_SET(field, mask) ((void)((field) |= (mask)))
